@@ -19,7 +19,7 @@ namespace setup_screen {
 
 namespace {
 
-constexpr int32_t QR_SIZE = 200;
+constexpr int32_t QR_SIZE = 190;
 
 portal_ui::Screen gScreen = {};
 lv_obj_t *gQr = nullptr;
@@ -39,7 +39,7 @@ void buildJoinPayload(char *out, size_t size) {
 void setStep(const char *text) {
     if (gStep != nullptr) {
         lv_label_set_text(gStep, text);
-        lv_obj_align(gStep, LV_ALIGN_BOTTOM_MID, 0, -58);
+        lv_obj_align(gStep, LV_ALIGN_BOTTOM_MID, 0, -52);
     }
 }
 
@@ -70,7 +70,9 @@ void show() {
     lv_qrcode_set_size(gQr, QR_SIZE);
     lv_qrcode_set_dark_color(gQr, lv_color_black());
     lv_qrcode_set_light_color(gQr, lv_color_white());
-    lv_obj_align(gQr, LV_ALIGN_CENTER, 0, -6);
+    // Sits below centre so the title above it has room to breathe: at the
+    // exact centre the code crowds the line of text right against it.
+    lv_obj_align(gQr, LV_ALIGN_CENTER, 0, 18);
     lv_obj_set_style_border_width(gQr, 8, 0);
     lv_obj_set_style_border_color(gQr, lv_color_white(), 0);
 
@@ -83,7 +85,7 @@ void show() {
     lv_obj_set_style_text_color(gStep, lv_color_white(), 0);
     lv_obj_set_style_text_align(gStep, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(gStep, "");
-    lv_obj_align(gStep, LV_ALIGN_BOTTOM_MID, 0, -58);
+    lv_obj_align(gStep, LV_ALIGN_BOTTOM_MID, 0, -52);
 
     gBuilt = true;
     lv_screen_load(gScreen.root);

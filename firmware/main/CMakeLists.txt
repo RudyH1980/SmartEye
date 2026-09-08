@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "test.cpp" "ui.cpp" "main.cpp" "portal_demo.cpp" "setup_screen.cpp" "home_screen.cpp" "portal_apps.cpp" "lights_pages.cpp"
+    SRCS "test.cpp" "ui.cpp" "main.cpp" "portal_demo.cpp" "setup_screen.cpp" "home_screen.cpp" "portal_apps.cpp" "lights_pages.cpp" "settings_screen.cpp"
     INCLUDE_DIRS "."
     REQUIRES
         nvs_flash

@@ -15,6 +15,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs.h"
+#include "esp_timer.h"
+#include "lwip/sockets.h"
 #include "nvs_flash.h"
 
 constexpr static const char *TAG = "WIFI";
@@ -27,8 +29,10 @@ constexpr const char *NVS_NAMESPACE = "smarteye";
 constexpr const char *NVS_KEY_SSID = "wifi_ssid";
 constexpr const char *NVS_KEY_PASS = "wifi_pass";
 
-// Give up on stored credentials after this many tries and offer setup instead
-constexpr int MAX_CONNECT_ATTEMPTS = 5;
+// A network that is stored but momentarily out of reach must never send the
+// user back to first-run setup: it just keeps trying quietly in the
+// background while the interface stays usable.
+constexpr uint32_t RETRY_DELAY_MS = 5000;
 
 constexpr size_t SSID_MAX = 32;
 constexpr size_t PASS_MAX = 64;
@@ -37,6 +41,7 @@ StateCallback gCallback;
 State gState = State::Idle;
 char gIpAddress[16] = "";
 int gConnectAttempts = 0;
+esp_timer_handle_t gRetryTimer = nullptr;
 httpd_handle_t gServer = nullptr;
 bool gProvisioning = false;
 
@@ -116,27 +121,46 @@ void urlDecode(const char *in, char *out, size_t outSize) {
 
 esp_err_t rootHandler(httpd_req_t *request) {
     static const char *PAGE_HEAD =
-        "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'>"
-        "<title>SmartEye</title><style>"
-        "body{font-family:system-ui,sans-serif;background:#111;color:#eee;margin:0;padding:24px}"
-        "h1{font-size:20px;margin:0 0 4px}p{color:#999;margin:0 0 20px;font-size:14px}"
-        "label{display:block;margin:14px 0 6px;font-size:14px}"
-        "select,input{width:100%;box-sizing:border-box;padding:12px;border-radius:8px;"
-        "border:1px solid #444;background:#1c1c1c;color:#eee;font-size:16px}"
-        "button{width:100%;margin-top:22px;padding:14px;border:0;border-radius:8px;"
-        "background:#e0189b;color:#fff;font-size:16px;font-weight:600}"
-        "</style><h1>SmartEye</h1><p>Kies je wifi-netwerk</p>"
-        "<form method=POST action=/save><label>Netwerk</label><select name=ssid>";
+        "<!doctype html><html lang=nl><meta charset=utf-8>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<title>SmartEye instellen</title><style>"
+        ":root{color-scheme:dark}*{box-sizing:border-box}"
+        "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;"
+        "font-family:system-ui,-apple-system,'Segoe UI',sans-serif;"
+        "background:radial-gradient(circle at 50% 0%,#241a33 0%,#0d0d12 60%);color:#f2f2f4}"
+        "main{width:100%;max-width:420px;padding:32px 24px 40px}"
+        ".mark{width:66px;height:66px;margin:0 auto 20px;border-radius:50%;"
+        "background:conic-gradient(from 210deg,#e0189b,#f97316,#f2c044,#34c759,#3ba6f2,#8b5cf6,#e0189b);"
+        "display:flex;align-items:center;justify-content:center}"
+        ".mark span{width:26px;height:26px;border-radius:50%;background:#0d0d12}"
+        "h1{font-size:26px;font-weight:650;margin:0 0 6px;text-align:center;letter-spacing:-.02em}"
+        ".sub{margin:0 0 28px;text-align:center;color:#9a9aa6;font-size:15px;line-height:1.5}"
+        "label{display:block;margin:0 0 8px;font-size:13px;font-weight:600;"
+        "text-transform:uppercase;letter-spacing:.07em;color:#8f8f9c}"
+        ".field{margin-bottom:20px}"
+        "select,input{width:100%;padding:14px 16px;border-radius:12px;font-size:16px;"
+        "border:1px solid #2e2e3a;background:#17171f;color:#f2f2f4}"
+        "select:focus,input:focus{outline:0;border-color:#e0189b;background:#1c1c26}"
+        "button{width:100%;margin-top:8px;padding:16px;border:0;border-radius:12px;"
+        "background:#e0189b;color:#fff;font-size:16px;font-weight:650}"
+        "button:active{background:#c0157f}"
+        ".hint{margin:22px 0 0;font-size:13px;line-height:1.6;color:#75758a;text-align:center}"
+        "</style><main><div class=mark><span></span></div>"
+        "<h1>SmartEye instellen</h1>"
+        "<p class=sub>Kies het netwerk waarmee dit scherm verbinding moet maken.</p>"
+        "<form method=POST action=/save>"
+        "<div class=field><label>Netwerk</label><select name=ssid>";
 
     static const char *PAGE_TAIL =
-        "</select>"
-        "<label>Of typ de naam zelf (bij een verborgen netwerk)</label>"
-        "<input name=manual placeholder='netwerknaam' autocomplete=off autocapitalize=off>"
-        "<label>Wachtwoord</label>"
-        "<input name=pass type=password autocomplete=off>"
+        "</select></div>"
+        "<div class=field><label>Of typ de naam zelf</label>"
+        "<input name=manual placeholder='Voor een verborgen netwerk' autocomplete=off "
+        "autocapitalize=off autocorrect=off></div>"
+        "<div class=field><label>Wachtwoord</label>"
+        "<input name=pass type=password autocomplete=off></div>"
         "<button type=submit>Verbinden</button></form>"
-        "<p style='margin-top:18px;font-size:13px'>Alleen 2,4 GHz-netwerken "
-        "verschijnen hier; dit apparaat heeft geen 5 GHz.</p>";
+        "<p class=hint>Alleen 2,4 GHz-netwerken staan in de lijst.<br>"
+        "Dit apparaat kan geen 5 GHz.</p></main>";
 
     httpd_resp_set_type(request, "text/html; charset=utf-8");
     httpd_resp_sendstr_chunk(request, PAGE_HEAD);
@@ -248,10 +272,22 @@ esp_err_t saveHandler(httpd_req_t *request) {
     httpd_resp_set_type(request, "text/html; charset=utf-8");
     httpd_resp_sendstr(
         request,
-        "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'>"
-        "<style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;padding:24px}"
-        "</style><h1>Opgeslagen</h1>"
-        "<p>SmartEye verbindt nu met je netwerk. Dit setup-netwerk verdwijnt.</p>"
+        "<!doctype html><html lang=nl><meta charset=utf-8>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<title>SmartEye</title><style>"
+        ":root{color-scheme:dark}"
+        "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;"
+        "font-family:system-ui,-apple-system,'Segoe UI',sans-serif;text-align:center;"
+        "background:radial-gradient(circle at 50% 0%,#123322 0%,#0d0d12 60%);color:#f2f2f4}"
+        "main{padding:32px 28px;max-width:380px}"
+        ".tick{width:64px;height:64px;margin:0 auto 22px;border-radius:50%;background:#34c759;"
+        "display:flex;align-items:center;justify-content:center;font-size:32px;color:#0d0d12}"
+        "h1{font-size:24px;margin:0 0 10px;letter-spacing:-.02em}"
+        "p{margin:0;color:#9a9aa6;font-size:15px;line-height:1.6}"
+        "</style><main><div class=tick>&#10003;</div>"
+        "<h1>Opgeslagen</h1>"
+        "<p>SmartEye verbindt nu met je netwerk.<br>"
+        "Dit setup-netwerk verdwijnt zo vanzelf.</p></main>"
     );
 
     // Let the reply reach the phone before the radio is torn down
@@ -266,10 +302,118 @@ esp_err_t catchAllHandler(httpd_req_t *request) {
     return rootHandler(request);
 }
 
+
+// --------------------------------------------------------- captive portal --
+
+/**
+ * @brief Answer every DNS question with our own address
+ * @details This is what makes a phone open the setup page by itself. On
+ *          joining a network the operating system fetches a known URL to see
+ *          whether it really has internet; pointing every name here means
+ *          that check lands on our page, and the phone shows it as a sign-in
+ *          screen. Without it you have to type the address by hand.
+ */
+void dnsTask(void *param) {
+    (void)param;
+
+    constexpr uint16_t DNS_PORT = 53;
+    constexpr size_t MAX_QUERY = 256;
+
+    const int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+    if (sock < 0) {
+        ESP_LOGE(TAG, "Could not open the DNS socket");
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    sockaddr_in bindAddr = {};
+    bindAddr.sin_family = AF_INET;
+    bindAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    bindAddr.sin_port = htons(DNS_PORT);
+
+    if (bind(sock, reinterpret_cast<sockaddr *>(&bindAddr), sizeof(bindAddr)) < 0) {
+        ESP_LOGE(TAG, "Could not bind the DNS port");
+        close(sock);
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    ESP_LOGI(TAG, "Captive portal DNS running");
+
+    uint8_t query[MAX_QUERY];
+    uint8_t reply[MAX_QUERY + 16];
+
+    while (gProvisioning) {
+        sockaddr_in from = {};
+        socklen_t fromLen = sizeof(from);
+        const int len = recvfrom(
+            sock,
+            query,
+            sizeof(query),
+            0,
+            reinterpret_cast<sockaddr *>(&from),
+            &fromLen
+        );
+
+        // Needs at least a header and one question
+        if (len < 12) {
+            continue;
+        }
+
+        std::memcpy(reply, query, len);
+        reply[2] = 0x81;  // Response, recursion available
+        reply[3] = 0x80;
+        reply[6] = 0x00;  // One answer
+        reply[7] = 0x01;
+        reply[8] = 0x00;  // No authority records
+        reply[9] = 0x00;
+        reply[10] = 0x00;  // No additional records
+        reply[11] = 0x00;
+
+        int at = len;
+        reply[at++] = 0xC0;  // Point back at the name in the question
+        reply[at++] = 0x0C;
+        reply[at++] = 0x00;  // Type A
+        reply[at++] = 0x01;
+        reply[at++] = 0x00;  // Class IN
+        reply[at++] = 0x01;
+        reply[at++] = 0x00;  // Time to live: 60 seconds
+        reply[at++] = 0x00;
+        reply[at++] = 0x00;
+        reply[at++] = 0x3C;
+        reply[at++] = 0x00;  // Four bytes of address follow
+        reply[at++] = 0x04;
+        reply[at++] = 192;
+        reply[at++] = 168;
+        reply[at++] = 4;
+        reply[at++] = 1;
+
+        sendto(sock, reply, at, 0, reinterpret_cast<sockaddr *>(&from), fromLen);
+    }
+
+    close(sock);
+    ESP_LOGI(TAG, "Captive portal DNS stopped");
+    vTaskDelete(nullptr);
+}
+
+/**
+ * @brief Send the connectivity checks to the setup page
+ * @details Each platform fetches its own URL to test for internet. Answering
+ *          with a redirect is what turns the notification into a page that
+ *          opens by itself.
+ */
+esp_err_t redirectHandler(httpd_req_t *request) {
+    httpd_resp_set_status(request, "302 Found");
+    httpd_resp_set_hdr(request, "Location", SETUP_URL);
+    httpd_resp_send(request, nullptr, 0);
+    return ESP_OK;
+}
+
 void startWebServer() {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.lru_purge_enable = true;
+    config.max_uri_handlers = 16;
 
     if (httpd_start(&gServer, &config) != ESP_OK) {
         ESP_LOGE(TAG, "Could not start setup web server");
@@ -287,6 +431,26 @@ void startWebServer() {
     save.method = HTTP_POST;
     save.handler = saveHandler;
     httpd_register_uri_handler(gServer, &save);
+
+    // What each platform fetches to decide whether it has internet
+    static const char *CHECK_URLS[] = {
+        "/hotspot-detect.html",   // iOS and macOS
+        "/library/test/success.html",
+        "/generate_204",          // Android
+        "/gen_204",
+        "/connecttest.txt",       // Windows
+        "/ncsi.txt",
+        "/canonical.html",        // Firefox
+        "/success.txt",
+    };
+
+    for (const char *url : CHECK_URLS) {
+        httpd_uri_t check = {};
+        check.uri = url;
+        check.method = HTTP_GET;
+        check.handler = redirectHandler;
+        httpd_register_uri_handler(gServer, &check);
+    }
 
     httpd_uri_t catchAll = {};
     catchAll.uri = "/*";
@@ -325,6 +489,7 @@ void startProvisioningMode() {
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &apConfig));
 
     startWebServer();
+    xTaskCreate(dnsTask, "captive_dns", 3072, nullptr, 4, nullptr);
     setState(State::Provisioning, SETUP_AP_NAME);
 }
 
@@ -371,16 +536,21 @@ void eventHandler(void *arg, esp_event_base_t base, int32_t id, void *data) {
         }
 
         gConnectAttempts++;
-        if (gConnectAttempts < MAX_CONNECT_ATTEMPTS) {
-            ESP_LOGW(TAG, "Connect failed, retry %d/%d", gConnectAttempts, MAX_CONNECT_ATTEMPTS);
-            esp_wifi_connect();
-            return;
+
+        // Log the first few, then go quiet: a router that is off for the
+        // night should not fill the log with one line every five seconds.
+        if (gConnectAttempts <= 3) {
+            ESP_LOGW(TAG, "Connect failed, retrying (attempt %d)", gConnectAttempts);
+        } else if ((gConnectAttempts % 60) == 0) {
+            ESP_LOGW(TAG, "Still not connected after %d attempts", gConnectAttempts);
         }
 
-        // The stored network is gone or the password changed: rather than
-        // retrying forever, offer setup so it can be corrected on the spot.
-        ESP_LOGW(TAG, "Giving up on stored network, offering setup");
-        startProvisioningMode();
+        // Space the attempts out rather than hammering the radio
+        if (gRetryTimer != nullptr) {
+            esp_timer_start_once(gRetryTimer, RETRY_DELAY_MS * 1000);
+        } else {
+            esp_wifi_connect();
+        }
         return;
     }
 
@@ -415,6 +585,11 @@ esp_err_t start(StateCallback callback) {
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
+
+    esp_timer_create_args_t retryArgs = {};
+    retryArgs.callback = [](void *) { esp_wifi_connect(); };
+    retryArgs.name = "wifi_retry";
+    esp_timer_create(&retryArgs, &gRetryTimer);
 
     connectWithStoredCredentials();
     return ESP_OK;

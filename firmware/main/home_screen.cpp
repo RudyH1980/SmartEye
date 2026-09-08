@@ -47,9 +47,18 @@ const IconSpec ICONS[] = {
     {App::Moods,    "Moods",    portal_ui::icon::MOOD,       0xEC1E9C,  COL_NARROW, ROW_SPACING},
 };
 
+// Page two holds what the original keeps in its phone app. Settings live here
+// rather than as an eighth icon, so the first page stays the seven the
+// original shows.
+const IconSpec SETTINGS_ICON = {
+    App::Settings, "Instellingen", portal_ui::icon::SETTINGS, 0x4B5563, 0, -20
+};
+
 portal_ui::Screen gScreen = {};
+portal_ui::Screen gPageTwo = {};
 LaunchCallback gCallback;
 bool gBuilt = false;
+uint8_t gPage = 0;
 
 void iconClickedCb(lv_event_t *event) {
     const auto *spec = static_cast<const IconSpec *>(lv_event_get_user_data(event));
@@ -115,6 +124,18 @@ void createPageDots(lv_obj_t *parent, int count, int active) {
     }
 }
 
+void pageSwipeCb(lv_event_t *event) {
+    const portal_ui::Swipe swipe = portal_ui::swipeFromEvent(event);
+
+    if (swipe == portal_ui::Swipe::Left && gPage == 0) {
+        gPage = 1;
+        lv_screen_load(gPageTwo.root);
+    } else if (swipe == portal_ui::Swipe::Right && gPage == 1) {
+        gPage = 0;
+        lv_screen_load(gScreen.root);
+    }
+}
+
 }  // namespace
 
 void build(LaunchCallback callback) {
@@ -135,7 +156,21 @@ void build(LaunchCallback callback) {
 
     // One page, so one dot. A second dot would promise a page to swipe to
     // that does not exist yet.
-    createPageDots(gScreen.root, 1, 0);
+    createPageDots(gScreen.root, 2, 0);
+    lv_obj_add_flag(gScreen.root, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(gScreen.root, pageSwipeCb, LV_EVENT_PRESSED, nullptr);
+    lv_obj_add_event_cb(gScreen.root, pageSwipeCb, LV_EVENT_RELEASED, nullptr);
+
+    // Page two: settings
+    lv_obj_t *second = lv_obj_create(nullptr);
+    gPageTwo = portal_ui::createScreen(second, portal_ui::palette::IDLE);
+    portal_ui::showHeader(gPageTwo, false);
+    lv_obj_add_flag(gPageTwo.homePill, LV_OBJ_FLAG_HIDDEN);
+    createIcon(gPageTwo.root, SETTINGS_ICON);
+    createPageDots(gPageTwo.root, 2, 1);
+    lv_obj_add_flag(gPageTwo.root, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(gPageTwo.root, pageSwipeCb, LV_EVENT_PRESSED, nullptr);
+    lv_obj_add_event_cb(gPageTwo.root, pageSwipeCb, LV_EVENT_RELEASED, nullptr);
 
     gBuilt = true;
     ESP_LOGI(TAG, "Home screen built with %d icons", static_cast<int>(sizeof(ICONS) / sizeof(ICONS[0])));
@@ -145,6 +180,7 @@ void show() {
     if (!gBuilt) {
         return;
     }
+    gPage = 0;
     lv_screen_load_anim(gScreen.root, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
 }
 

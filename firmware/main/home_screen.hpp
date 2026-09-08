@@ -18,6 +18,7 @@ enum class App {
     Energy,
     Timer,
     Moods,
+    Settings,
 };
 
 /** @brief Called when an icon is tapped */

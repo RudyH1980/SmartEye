@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SmartEye installeren</title>
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; padding: 48px 20px;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: radial-gradient(circle at 50% 0%, #241a33 0%, #0d0d12 55%);
+    color: #f2f2f4; line-height: 1.6;
+  }
+  main { max-width: 640px; margin: 0 auto; }
+  .mark {
+    width: 84px; height: 84px; margin: 0 auto 24px; border-radius: 50%;
+    background: conic-gradient(from 210deg, #e0189b, #f97316, #f2c044, #34c759, #3ba6f2, #8b5cf6, #e0189b);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .mark span { width: 34px; height: 34px; border-radius: 50%; background: #0d0d12; }
+  h1 { font-size: 34px; margin: 0 0 8px; text-align: center; letter-spacing: -.02em; }
+  .sub { margin: 0 0 40px; text-align: center; color: #9a9aa6; font-size: 17px; }
+  .install { text-align: center; margin: 0 0 44px; }
+  esp-web-install-button { --esp-tools-button-color: #fff; --esp-tools-button-text-color: #0d0d12; }
+  .fallback { color: #f2c044; font-size: 15px; }
+  h2 { font-size: 19px; margin: 36px 0 12px; letter-spacing: -.01em; }
+  ol, ul { margin: 0; padding-left: 22px; color: #c9c9d2; }
+  li { margin-bottom: 10px; }
+  code {
+    background: #17171f; border: 1px solid #2e2e3a; border-radius: 6px;
+    padding: 2px 7px; font-size: 14px; color: #7fe3c4;
+  }
+  .card {
+    background: #14141b; border: 1px solid #26262f; border-radius: 14px;
+    padding: 22px 24px; margin-bottom: 18px;
+  }
+  .note { color: #75758a; font-size: 14px; }
+  a { color: #e0189b; }
+  footer { margin-top: 48px; text-align: center; color: #5b5b6b; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="mark"><span></span></div>
+  <h1>SmartEye</h1>
+  <p class="sub">Een rond bedieningsscherm voor Home Assistant,<br>op een Waveshare ESP32-S3-Touch-LCD-2.8C.</p>
+
+  <div class="install">
+    <esp-web-install-button manifest="manifest.json">
+      <button slot="activate" style="padding:16px 34px;border:0;border-radius:12px;background:#fff;color:#0d0d12;font-size:17px;font-weight:650;cursor:pointer">
+        Installeren op je scherm
+      </button>
+      <span slot="unsupported" class="fallback">
+        Deze browser kan geen apparaten flashen. Gebruik Chrome of Edge op een computer.
+      </span>
+      <span slot="not-allowed" class="fallback">
+        Dit werkt alleen op een beveiligde verbinding (https).
+      </span>
+    </esp-web-install-button>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Wat je nodig hebt</h2>
+    <ul>
+      <li>Een Waveshare ESP32-S3-Touch-LCD-2.8C (het ronde scherm van 480x480)</li>
+      <li>Een USB-C kabel die ook data doorgeeft, niet alleen stroom</li>
+      <li>Chrome of Edge op een computer</li>
+      <li>Home Assistant in je netwerk</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Installeren</h2>
+    <ol>
+      <li>Sluit het scherm met USB aan op je computer.</li>
+      <li>Klik hierboven op <strong>Installeren</strong> en kies de poort die verschijnt.</li>
+      <li>Wacht tot het klaar is. Het scherm herstart en toont een QR-code.</li>
+      <li>Scan die met je telefoon: je komt op het wifi-netwerk van het scherm en de instelpagina opent vanzelf.</li>
+      <li>Kies je eigen wifi-netwerk en vul het wachtwoord in.</li>
+    </ol>
+    <p class="note">Lukt de QR-code niet, ga dan handmatig naar het netwerk <code>SmartEye-setup</code> en open <code>192.168.4.1</code>.</p>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Koppelen aan Home Assistant</h2>
+    <p>Maak in Home Assistant een toegangssleutel aan: klik linksonder op je naam, ga naar
+      <strong>Beveiliging</strong> en maak onderaan een <strong>langlevende toegangssleutel</strong>.</p>
+    <p>Maak daarna twee helpers aan onder <strong>Instellingen &rsaquo; Apparaten &amp; diensten &rsaquo; Helpers</strong>:</p>
+    <ul>
+      <li><code>input_select.smarteye_ruimte</code> &mdash; een keuzelijst met je kamernamen</li>
+      <li><code>input_number.smarteye_helderheid</code> &mdash; een schuif van 5 tot 100</li>
+    </ul>
+    <p class="note">Het scherm volgt die twee. Zet ze op een dashboard en je stelt het scherm in
+      vanaf je telefoon of je browser, zonder er iets voor te hoeven flashen.</p>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Wat er dan vanzelf verschijnt</h2>
+    <ul>
+      <li>Alle lampen uit de gekozen kamer</li>
+      <li>Lichtgroepen die je in Home Assistant hebt gemaakt, met het aantal lampen erin</li>
+      <li>Je scenes, als Moods</li>
+      <li>De thermostaat van die kamer</li>
+    </ul>
+    <p class="note">Wijzig je iets in Home Assistant, dan staat het binnen twintig seconden op het scherm.</p>
+  </div>
+
+  <footer>
+    <a href="https://github.com/RudyH1980/SmartEye">Broncode op GitHub</a> &middot; MIT
+  </footer>
+</main>
+</body>
+</html>

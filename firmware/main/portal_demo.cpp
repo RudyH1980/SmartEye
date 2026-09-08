@@ -10,15 +10,18 @@
 #include "portal_demo.hpp"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "board_drivers.hpp"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "ha_client.hpp"
+#include "settings_screen.hpp"
 #include "home_screen.hpp"
 #include "lights_pages.hpp"
 #include "portal_apps.hpp"
+#include "test.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "imu_services.hpp"
@@ -89,6 +92,9 @@ bool gSetupShowing = false;
 char gClimateEntity[64] = {};
 char gLightEntity[64] = {};
 
+// Kept for the backlight, which Home Assistant can set
+BoardDrivers::HardwareHandles gHw = {};
+
 /**
  * @brief Thermostat modes, which are what actually colour the screen
  * @details The background follows the mode, not how the setpoint compares to
@@ -135,6 +141,111 @@ int32_t angleDelta(int32_t from, int32_t to) {
         delta += 360;
     }
     return delta;
+}
+
+
+// ---------------------------------------------------------------------------
+// Home Assistant
+// ---------------------------------------------------------------------------
+
+void renderClimateIdle();
+void showLightsIdle();
+
+// The display is configured from Home Assistant itself: these are ordinary
+// helper entities, so they can be changed from any dashboard, on a phone or
+// in a browser, without touching the firmware.
+constexpr const char *HELPER_ROOM = "input_select.smarteye_ruimte";
+constexpr const char *HELPER_BRIGHTNESS = "input_number.smarteye_helderheid";
+
+// How often to look for changes made in Home Assistant
+constexpr uint32_t HA_POLL_MS = 20000;
+
+char gCurrentRoom[40] = {};
+
+/** @brief Take the devices Home Assistant reported and put them on screen */
+void applyDevices(const ha_client::Device *devices, size_t count) {
+    if (devices == nullptr) {
+        ESP_LOGW(TAG, "Home Assistant unreachable, keeping what is on screen");
+        return;
+    }
+
+    // The lights screens all read from the same list, so the wheel, the
+    // temperature page and the zone view can never disagree about which
+    // lamps exist or how they are grouped.
+    lights_pages::setLamps(devices, count);
+
+    for (size_t i = 0; i < count; i++) {
+        const ha_client::Device &device = devices[i];
+
+        if ((device.domain == ha_client::Domain::Climate) && (gClimateEntity[0] == 0)) {
+            std::strncpy(gClimateEntity, device.entityId, sizeof(gClimateEntity) - 1);
+            if (device.temperature > 0) {
+                gSetpointTenths = device.temperature;
+            }
+            if (lvgl_wrapper::lock(100)) {
+                portal_ui::setTitle(gClimate.ui, device.name);
+                renderClimateIdle();
+                lvgl_wrapper::unlock();
+            }
+            ESP_LOGI(TAG, "Thermostat: %s", device.name);
+        }
+
+        if ((device.domain == ha_client::Domain::Light) && (gLightEntity[0] == 0)) {
+            std::strncpy(gLightEntity, device.entityId, sizeof(gLightEntity) - 1);
+            gLightsOn = device.on;
+            if (device.brightness >= 0) {
+                gBrightness = device.brightness;
+            }
+            if (lvgl_wrapper::lock(100)) {
+                portal_ui::setTitle(gLights.ui, device.name);
+                showLightsIdle();
+                lvgl_wrapper::unlock();
+            }
+            ESP_LOGI(TAG, "Light: %s (%s)", device.name, device.area);
+        }
+    }
+}
+
+/**
+ * @brief Follow the settings made in Home Assistant, then refresh
+ * @details Runs on its own task: reading helpers and the device list means
+ *          several requests, and none of that may hold up the screen.
+ */
+void homeAssistantTask(void *param) {
+    (void)param;
+
+    while (true) {
+        char room[40] = {};
+        const esp_err_t roomResult = ha_client::readHelper(HELPER_ROOM, room, sizeof(room));
+
+        if (roomResult == ESP_ERR_NOT_FOUND) {
+            // No helper yet: show everything rather than nothing
+            if (gCurrentRoom[0] != 0) {
+                gCurrentRoom[0] = 0;
+                ha_client::setRoom("");
+            }
+        } else if ((roomResult == ESP_OK) && (std::strcmp(room, gCurrentRoom) != 0)) {
+            std::strncpy(gCurrentRoom, room, sizeof(gCurrentRoom) - 1);
+            ha_client::setRoom(room);
+            ESP_LOGI(TAG, "Room set from Home Assistant: %s", room);
+        }
+
+        char brightness[16] = {};
+        if (ha_client::readHelper(HELPER_BRIGHTNESS, brightness, sizeof(brightness)) == ESP_OK) {
+            const int percent = std::atoi(brightness);
+            if ((percent >= 5) && (percent <= 100)) {
+                tests::setBacklight(gHw, percent);
+            }
+        }
+
+        ha_client::refresh(applyDevices);
+        vTaskDelay(pdMS_TO_TICKS(HA_POLL_MS));
+    }
+}
+
+void startHomeAssistant() {
+    xTaskCreate(homeAssistantTask, "ha_poll", 6144, nullptr, 3, nullptr);
+    ESP_LOGI(TAG, "Following Home Assistant for room and brightness");
 }
 
 // ---------------------------------------------------------------------------
@@ -666,11 +777,13 @@ void buildLights() {
 
 [[noreturn]] void runPortal(const BoardDrivers::HardwareHandles &hw) {
     ESP_LOGI(TAG, "=== Portal UI ===");
+    gHw = hw;
 
     if (lvgl_wrapper::lock(100)) {
         buildClimate();
         buildLights();
 
+        settings_screen::build(hw, []() { home_screen::show(); });
         buildClimateModes();
         lights_pages::build(
             []() { lv_screen_load(gLights.screen); },
@@ -684,6 +797,9 @@ void buildLights() {
                     break;
                 case home_screen::App::Lights:
                     lv_screen_load_anim(gLights.screen, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
+                    break;
+                case home_screen::App::Settings:
+                    settings_screen::show();
                     break;
                 default: {
                     lv_obj_t *screen = portal_apps::entryScreen(app);
@@ -708,89 +824,10 @@ void buildLights() {
     // screens keep their placeholder values, so the interface is usable
     // whether or not Home Assistant answers.
     if ((HA_TOKEN[0] != 0) && (ha_client::begin(HA_HOST, HA_TOKEN) == ESP_OK)) {
-        ha_client::refresh([](const ha_client::Device *devices, size_t count) {
-            if (devices == nullptr) {
-                ESP_LOGW(TAG, "Home Assistant unreachable, keeping placeholders");
-                return;
-            }
-
-            for (size_t i = 0; i < count; i++) {
-                const ha_client::Device &device = devices[i];
-
-                if ((device.domain == ha_client::Domain::Climate) && (gClimateEntity[0] == 0)) {
-                    std::strncpy(gClimateEntity, device.entityId, sizeof(gClimateEntity) - 1);
-                    if (device.temperature > 0) {
-                        gSetpointTenths = device.temperature;
-                    }
-                    if (lvgl_wrapper::lock(100)) {
-                        portal_ui::setTitle(gClimate.ui, device.name);
-                        renderClimateIdle();
-                        lvgl_wrapper::unlock();
-                    }
-                    ESP_LOGI(TAG, "Thermostat: %s (%s)", device.name, device.entityId);
-                }
-
-                if ((device.domain == ha_client::Domain::Light) && (gLightEntity[0] == 0)) {
-                    std::strncpy(gLightEntity, device.entityId, sizeof(gLightEntity) - 1);
-                    gLightsOn = device.on;
-                    if (device.brightness >= 0) {
-                        gBrightness = device.brightness;
-                    }
-                    if (lvgl_wrapper::lock(100)) {
-                        portal_ui::setTitle(gLights.ui, device.name);
-                        showLightsIdle();
-                        lvgl_wrapper::unlock();
-                    }
-                    ESP_LOGI(TAG, "Light: %s (%s)", device.name, device.entityId);
-                }
-            }
-        });
+        startHomeAssistant();
     } else {
         ESP_LOGW(TAG, "No Home Assistant token set, running on placeholder data");
     }
-
-    // Wi-Fi runs alongside the UI: the setup screen takes over while the
-    // board has no network, and hands back once it is on one.
-    wifi_manager::start([](wifi_manager::State state, const char *detail) {
-        if (!lvgl_wrapper::lock(100)) {
-            return;
-        }
-
-        // The screen is only taken over when there is something to do about
-        // it. Connecting and reconnecting happen in the background: those are
-        // not worth interrupting whatever the user is looking at.
-        switch (state) {
-            case wifi_manager::State::Provisioning:
-                gSetupShowing = true;
-                setup_screen::showJoinCode();
-                break;
-
-            case wifi_manager::State::Connected:
-                if (gSetupShowing) {
-                    gSetupShowing = false;
-                    setup_screen::showConnected(detail);
-
-                    // Let the confirmation register, then hand back
-                    lv_timer_t *timer = lv_timer_create(
-                        [](lv_timer_t *t) {
-                            home_screen::show();
-                            lv_timer_delete(t);
-                        },
-                        1400,
-                        nullptr
-                    );
-                    lv_timer_set_repeat_count(timer, 1);
-                }
-                break;
-
-            case wifi_manager::State::Connecting:
-            case wifi_manager::State::Idle:
-            case wifi_manager::State::Failed:
-                break;
-        }
-
-        lvgl_wrapper::unlock();
-    });
 
     if (hw.imu != nullptr) {
         if (lvgl_wrapper::lock(100)) {
