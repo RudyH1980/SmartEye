@@ -1,0 +1,21 @@
+# PlatformIO build output
+firmware/.pio/
+
+# Fetched by the ESP-IDF component manager on first build
+firmware/managed_components/
+firmware/dependencies.lock
+
+# Generated from sdkconfig.defaults; the per-environment file is kept because
+# it carries settings this board actually needs (see DECISIONS D-008)
+firmware/sdkconfig.bak
+firmware/sdkconfig.esp32s3
+
+# Local secrets, should never be committed
+firmware/main/secrets.hpp
+.unifi-creds
+
+# Editor and OS noise
+.vscode/
+.DS_Store
+Thumbs.db
+.git_upstream_backup/

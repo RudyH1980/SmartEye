@@ -1,0 +1,135 @@
+---
+# ESP32 C++ Naming Convention: camelCase for variables and methods
+# This configuration enforces camelCase naming for consistency
+
+Checks: >
+  readability-*,
+  modernize-*,
+  performance-*,
+  bugprone-*,
+  cppcoreguidelines-*,
+  clang-analyzer-*,
+  modernize-use-override,
+  -readability-identifier-naming.IgnoreMainLikeFunctions,
+  -clang-diagnostic-deprecated-anon-enum-enum-conversion,
+  -modernize-use-trailing-return-type,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -readability-magic-numbers,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+  -cppcoreguidelines-avoid-c-arrays,
+  -modernize-avoid-c-arrays,
+  -cppcoreguidelines-pro-type-static-cast-downcast,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-avoid-do-while,
+  -cppcoreguidelines-pro-type-union-access,
+  '-*,readability-function-cognitive-complexity'
+
+CheckOptions:
+  # Variables (local, global, static) - camelBack means lowerCamelCase
+  - key: readability-identifier-naming.VariableCase
+    value: camelBack
+
+  - key: readability-identifier-naming.LocalVariableCase
+    value: camelBack
+
+  - key: readability-identifier-naming.GlobalVariableCase
+    value: camelBack
+
+  - key: readability-identifier-naming.StaticVariableCase
+    value: camelBack
+
+  - key: readability-identifier-naming.StaticConstantCase
+    value: camelBack
+
+  # Parameters
+  - key: readability-identifier-naming.ParameterCase
+    value: camelBack
+
+  # Member variables - camelBack (lowerCamelCase)
+  - key: readability-identifier-naming.MemberCase
+    value: camelBack
+
+  - key: readability-identifier-naming.PrivateMemberCase
+    value: camelBack
+
+  - key: readability-identifier-naming.ProtectedMemberCase
+    value: camelBack
+
+  - key: readability-identifier-naming.PublicMemberCase
+    value: camelBack
+
+  # Methods and Functions
+  - key: readability-identifier-naming.MethodCase
+    value: camelBack
+
+  - key: readability-identifier-naming.FunctionCase
+    value: camelBack
+
+  - key: readability-identifier-naming.PrivateMethodCase
+    value: camelBack
+
+  - key: readability-identifier-naming.ProtectedMethodCase
+    value: camelBack
+
+  - key: readability-identifier-naming.PublicMethodCase
+    value: camelBack
+
+  # Classes, Structs, Enums - PascalCase (UpperCamelCase)
+  - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+
+  - key: readability-identifier-naming.StructCase
+    value: CamelCase
+
+  - key: readability-identifier-naming.EnumCase
+    value: CamelCase
+
+  - key: readability-identifier-naming.TypedefCase
+    value: CamelCase
+
+  - key: readability-identifier-naming.TypeAliasCase
+    value: CamelCase
+
+  # Namespaces - lowercase (standard C++ convention)
+  - key: readability-identifier-naming.NamespaceCase
+    value: CamelCase
+
+  # Enum constants - UPPER_CASE (e.g., STATE_IDLE, EVENT_CLICK)
+  - key: readability-identifier-naming.EnumConstantCase
+    value: UPPER_CASE
+
+  # Constants - UPPER_CASE for global constants (e.g., TAG, MAX_SIZE)
+  - key: readability-identifier-naming.ConstantCase
+    value: UPPER_CASE
+
+  - key: readability-identifier-naming.GlobalConstantCase
+    value: UPPER_CASE
+
+  - key: readability-identifier-naming.ConstexprVariableCase
+    value: UPPER_CASE
+
+  # Macros - UPPER_CASE (conventional for C/C++)
+  - key: readability-identifier-naming.MacroDefinitionCase
+    value: UPPER_CASE
+
+  # Ignored function names (ESP-IDF, FreeRTOS, system functions)
+  - key: readability-identifier-naming.FunctionIgnoredRegexp
+    value: '^(app_main|vTaskDelay|xTaskCreate|esp_.*|nvs_.*|lv_.*|bsp_.*)$'
+
+  - key: readability-function-cognitive-complexity.Threshold
+    value: 1000
+
+  # Identifier length minimum - allow short variable names like 'i', 'x', etc.
+  - key: readability-identifier-length.MinimumVariableNameLength
+    value: 2
+  - key: readability-identifier-length.MinimumParameterNameLength
+    value: 2
+  - key: readability-identifier-length.MinimumLoopCounterNameLength
+    value: 1
+
+# Only analyze project headers (exclude external/third-party code)
+HeaderFilterRegex: '^(?!.*(managed_components|build|esp-idf|esp_bsp|esp_lcd_jd9853|esp_lcd_touch_axs5106)).*$'
+AnalyzeTemporaryDtors: false
+WarningsAsErrors: ''

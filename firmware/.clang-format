@@ -1,0 +1,93 @@
+---
+# ESP32 C/C++ Code Formatter Configuration
+# TypeScript-like style: Return type on own line, each parameter on its own line
+
+BasedOnStyle: Google
+
+# Indentation
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ContinuationIndentWidth: 4
+
+# Line length - Balance between breaking params and preserving assignments
+ColumnLimit: 100
+
+# Braces - Custom: closing paren on its own line before brace
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: false
+  AfterControlStatement: Never
+  AfterClass: false
+  AfterStruct: false
+  AfterEnum: false
+  AfterNamespace: false
+  BeforeCatch: false
+  BeforeElse: false
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+
+# Pointers and references
+PointerAlignment: Right
+DerivePointerAlignment: false
+
+# Spacing
+SpaceAfterCStyleCast: false
+SpaceBeforeParens: ControlStatements
+SpaceBeforeAssignmentOperators: true
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+SpacesInAngles: Never
+SpaceInEmptyParentheses: false
+
+# Alignment - BlockIndent for closing paren on own line
+AlignConsecutiveAssignments: None
+AlignConsecutiveDeclarations: None
+AlignTrailingComments:
+  Kind: Always
+  OverEmptyLines: 0
+AlignAfterOpenBracket: BlockIndent
+
+# Breaking - Return type on same line as function name, parameters broken
+AlwaysBreakAfterReturnType: None
+AlwaysBreakBeforeMultilineStrings: false
+BreakBeforeBinaryOperators: None
+BreakBeforeTernaryOperators: true
+BreakConstructorInitializers: BeforeColon
+BreakStringLiterals: true
+
+# Include sorting
+SortIncludes: CaseSensitive
+IncludeBlocks: Preserve
+
+# Comments
+ReflowComments: true
+
+# C++ specific
+Cpp11BracedListStyle: true
+Standard: c++17
+
+# Keep empty lines
+MaxEmptyLinesToKeep: 2
+KeepEmptyLinesAtTheStartOfBlocks: false
+
+# Function parameters - Each on its own line (TypeScript style)
+BinPackArguments: false
+BinPackParameters: false
+AllowAllArgumentsOnNextLine: false
+AllowAllParametersOfDeclarationOnNextLine: false
+
+# Penalties - Force parameter breaks but avoid breaking assignments
+PenaltyBreakAssignment: 1000
+PenaltyBreakBeforeFirstCallParameter: 1
+PenaltyReturnTypeOnItsOwnLine: 10000
+
+# Other
+IndentCaseLabels: true
+IndentGotoLabels: true
+IndentPPDirectives: None
+CompactNamespaces: false
+FixNamespaceComments: true
