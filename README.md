@@ -5,8 +5,6 @@ ESP32-S3-Touch-LCD-2.8C: a round 480x480 touchscreen that controls a smart
 home. The layout and interaction model follow the original closely; none of
 Athom's branding, artwork or icons are used.
 
-![Round 480x480 display running the climate screen](docs/screenshot.jpg)
-
 ## What works
 
 - All seven Portal apps: Climate, Lights, Speakers, Weather, Energy, Timer
