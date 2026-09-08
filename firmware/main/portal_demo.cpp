@@ -10,10 +10,12 @@
 #include "portal_demo.hpp"
 
 #include <cstdio>
+#include <cstring>
 
 #include "board_drivers.hpp"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "ha_client.hpp"
 #include "home_screen.hpp"
 #include "lights_pages.hpp"
 #include "portal_apps.hpp"
@@ -24,6 +26,13 @@
 #include "portal_ui.hpp"
 #include "setup_screen.hpp"
 #include "wifi_manager.hpp"
+
+#if __has_include("secrets.hpp")
+#include "secrets.hpp"
+#else
+constexpr const char *HA_HOST = "";
+constexpr const char *HA_TOKEN = "";
+#endif
 
 constexpr static const char *TAG = "PORTAL_DEMO";
 
@@ -74,6 +83,11 @@ bool gRimDrag = false;
 // True while the setup screen owns the display, so a later connection knows
 // whether it still has to hand control back.
 bool gSetupShowing = false;
+
+// Which Home Assistant entities the two screens drive, empty while running on
+// placeholder data
+char gClimateEntity[64] = {};
+char gLightEntity[64] = {};
 
 /**
  * @brief Thermostat modes, which are what actually colour the screen
@@ -245,6 +259,10 @@ void powerButtonCb(lv_event_t *event) {
     gLightsOn = !gLightsOn;
     showLightsIdle();
     ESP_LOGI(TAG, "Lights %s", gLightsOn ? "on" : "off");
+
+    if (gLightEntity[0] != 0) {
+        ha_client::setPower(gLightEntity, gLightsOn);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -685,6 +703,51 @@ void buildLights() {
 
     // Builds the rest of the apps, taking the lock per app itself
     portal_apps::buildAll();
+
+    // Once there is a network, pull the real devices in. Until that lands the
+    // screens keep their placeholder values, so the interface is usable
+    // whether or not Home Assistant answers.
+    if ((HA_TOKEN[0] != 0) && (ha_client::begin(HA_HOST, HA_TOKEN) == ESP_OK)) {
+        ha_client::refresh([](const ha_client::Device *devices, size_t count) {
+            if (devices == nullptr) {
+                ESP_LOGW(TAG, "Home Assistant unreachable, keeping placeholders");
+                return;
+            }
+
+            for (size_t i = 0; i < count; i++) {
+                const ha_client::Device &device = devices[i];
+
+                if ((device.domain == ha_client::Domain::Climate) && (gClimateEntity[0] == 0)) {
+                    std::strncpy(gClimateEntity, device.entityId, sizeof(gClimateEntity) - 1);
+                    if (device.temperature > 0) {
+                        gSetpointTenths = device.temperature;
+                    }
+                    if (lvgl_wrapper::lock(100)) {
+                        portal_ui::setTitle(gClimate.ui, device.name);
+                        renderClimateIdle();
+                        lvgl_wrapper::unlock();
+                    }
+                    ESP_LOGI(TAG, "Thermostat: %s (%s)", device.name, device.entityId);
+                }
+
+                if ((device.domain == ha_client::Domain::Light) && (gLightEntity[0] == 0)) {
+                    std::strncpy(gLightEntity, device.entityId, sizeof(gLightEntity) - 1);
+                    gLightsOn = device.on;
+                    if (device.brightness >= 0) {
+                        gBrightness = device.brightness;
+                    }
+                    if (lvgl_wrapper::lock(100)) {
+                        portal_ui::setTitle(gLights.ui, device.name);
+                        showLightsIdle();
+                        lvgl_wrapper::unlock();
+                    }
+                    ESP_LOGI(TAG, "Light: %s (%s)", device.name, device.entityId);
+                }
+            }
+        });
+    } else {
+        ESP_LOGW(TAG, "No Home Assistant token set, running on placeholder data");
+    }
 
     // Wi-Fi runs alongside the UI: the setup screen takes over while the
     // board has no network, and hands back once it is on one.
