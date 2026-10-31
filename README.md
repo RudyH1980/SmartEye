@@ -15,15 +15,61 @@ Athom's branding, artwork or icons are used.
   - tilting the whole board, which the IMU reads as a throttle: hold it over
     and the value creeps, bring it upright and it stops
   - tapping, for on/off and presets
-- Wi-Fi setup on the device itself: it opens its own network and shows a QR
-  code, you pick your network on your phone. Credentials go to NVS, so it
-  never needs reflashing for a different network.
+- Wi-Fi setup on the device itself: it opens its own network (`SmartEye-setup`)
+  and shows a QR code, you pick your network on your phone. Credentials go to
+  NVS, so it never needs reflashing for a different network. If the QR code
+  does not open, join that network and open `192.168.4.1`. Settings can forget
+  the network (two taps) and start setup again.
 - Timer that keeps running in the background and sounds the onboard buzzer
   until you tap it away
 - SD card, mounted and formatted to FAT32 if needed
 
-Everything runs on mock data for now; the link to Homey and Home Assistant is
-the next step.
+## Home Assistant
+
+Home Assistant is the link to the house. Homey stays behind Home Assistant,
+so the board only needs one connection. The host and a long-lived access
+token are compiled in: copy `firmware/main/secrets.hpp.example` to
+`firmware/main/secrets.hpp` and fill both in. That file is gitignored. With
+no token the screens keep their placeholder values.
+
+Every 20 seconds the firmware reads two ordinary helpers, so you can change
+them from any dashboard:
+
+| Helper | What it does |
+|---|---|
+| `input_select.smarteye_ruimte` | Area name, spelled exactly as in Home Assistant. Missing helper: show every area. |
+| `input_number.smarteye_helderheid` | Backlight, 5 to 100. |
+
+From that area it then:
+
+- loads every `light`, including a light group made in Home Assistant (the
+  puck shows how many lamps are in the group), onto the lights wheel and the
+  colour-temperature page
+- takes the first `climate` entity for the thermostat title and the target
+  temperature
+- sends on/off for the first light when you tap the power button
+
+## Still on the device only
+
+Speakers, weather, energy and the timer do not read Home Assistant.
+
+Moods are still five fixed orbs (Colorful, Custom Mood, Emerald, Monochrome,
+Sunset). Scenes are fetched, but that list is not drawn, and tapping a mood
+does not call the scene service.
+
+Turning the rim or tilting the board changes the climate setpoint and the
+light brightness on the screen only. Those gestures do not call
+`setTemperature` or `setBrightness`. The temperature shown under the climate
+setpoint is fixed at 19.5°C.
+
+## Browser install
+
+https://rudyh1980.github.io/SmartEye/ flashes `docs/smarteye-firmware.bin`
+from Chrome or Edge on a computer, over USB.
+
+That image was built before the current source. It does not contain
+`SmartEye-setup`, `192.168.4.1`, the two helper entity ids, or the room-light
+template. Use the build below for the Home Assistant behaviour on this page.
 
 ## Hardware
 
@@ -42,9 +88,14 @@ port; set it in `platformio.ini`.
 
 ```bash
 cd firmware
+cp main/secrets.hpp.example main/secrets.hpp   # then fill in host and token
 pio run              # build
 pio run -t upload    # flash
 ```
+
+`firmware/build_release.sh` merges the bootloader, partition table and app
+into `docs/smarteye-firmware.bin` for the browser installer. Run it after a
+successful build.
 
 After changing any `CMakeLists.txt`, run `pio run -t clean` first: PlatformIO
 does not pick up changed `REQUIRES` otherwise, and you get the same error

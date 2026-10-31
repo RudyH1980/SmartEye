@@ -68,7 +68,7 @@
       <li>Een Waveshare ESP32-S3-Touch-LCD-2.8C (het ronde scherm van 480x480)</li>
       <li>Een USB-C kabel die ook data doorgeeft, niet alleen stroom</li>
       <li>Chrome of Edge op een computer</li>
-      <li>Home Assistant in je netwerk</li>
+      <li>Home Assistant in je netwerk, alleen als je zelf bouwt (zie hieronder)</li>
     </ul>
   </div>
 
@@ -77,35 +77,37 @@
     <ol>
       <li>Sluit het scherm met USB aan op je computer.</li>
       <li>Klik hierboven op <strong>Installeren</strong> en kies de poort die verschijnt.</li>
-      <li>Wacht tot het klaar is. Het scherm herstart en toont een QR-code.</li>
-      <li>Scan die met je telefoon: je komt op het wifi-netwerk van het scherm en de instelpagina opent vanzelf.</li>
-      <li>Kies je eigen wifi-netwerk en vul het wachtwoord in.</li>
+      <li>Wacht tot het klaar is en het scherm herstart.</li>
     </ol>
-    <p class="note">Lukt de QR-code niet, ga dan handmatig naar het netwerk <code>SmartEye-setup</code> en open <code>192.168.4.1</code>.</p>
+    <p class="note">Het bestand <code>smarteye-firmware.bin</code> op deze pagina is ouder dan de broncode.
+      Het bevat nog geen wifi-instelnetwerk en nog geen kamer-koppeling met Home Assistant.
+      Die zitten wel in de bron. Bouwen en flashen staat in de
+      <a href="https://github.com/RudyH1980/SmartEye#home-assistant">README</a>.</p>
   </div>
 
   <div class="card">
-    <h2 style="margin-top:0">Koppelen aan Home Assistant</h2>
-    <p>Maak in Home Assistant een toegangssleutel aan: klik linksonder op je naam, ga naar
-      <strong>Beveiliging</strong> en maak onderaan een <strong>langlevende toegangssleutel</strong>.</p>
-    <p>Maak daarna twee helpers aan onder <strong>Instellingen &rsaquo; Apparaten &amp; diensten &rsaquo; Helpers</strong>:</p>
+    <h2 style="margin-top:0">Home Assistant, als je zelf bouwt</h2>
+    <p>Host en toegangssleutel gaan in <code>firmware/main/secrets.hpp</code> (kopie van
+      <code>secrets.hpp.example</code>), niet via dit scherm. De sleutel maak je in Home Assistant
+      onder je profiel, <strong>Beveiliging</strong>, langlevende toegangssleutels.</p>
+    <p>Daarna twee helpers onder <strong>Instellingen, Apparaten en diensten, Helpers</strong>:</p>
     <ul>
-      <li><code>input_select.smarteye_ruimte</code> &mdash; een keuzelijst met je kamernamen</li>
-      <li><code>input_number.smarteye_helderheid</code> &mdash; een schuif van 5 tot 100</li>
+      <li><code>input_select.smarteye_ruimte</code>, een keuzelijst met je kamernamen</li>
+      <li><code>input_number.smarteye_helderheid</code>, een schuif van 5 tot 100</li>
     </ul>
-    <p class="note">Het scherm volgt die twee. Zet ze op een dashboard en je stelt het scherm in
-      vanaf je telefoon of je browser, zonder er iets voor te hoeven flashen.</p>
+    <p class="note">Het scherm leest die twee elke twintig seconden. Zonder helper voor de kamer toont het alle kamers.</p>
   </div>
 
   <div class="card">
-    <h2 style="margin-top:0">Wat er dan vanzelf verschijnt</h2>
+    <h2 style="margin-top:0">Wat de bron vandaag uit Home Assistant haalt</h2>
     <ul>
-      <li>Alle lampen uit de gekozen kamer</li>
-      <li>Lichtgroepen die je in Home Assistant hebt gemaakt, met het aantal lampen erin</li>
-      <li>Je scenes, als Moods</li>
-      <li>De thermostaat van die kamer</li>
+      <li>Alle lampen uit de gekozen kamer, inclusief lichtgroepen en het aantal lampen erin</li>
+      <li>De naam en de streeftemperatuur van de eerste thermostaat</li>
+      <li>Aan en uit van de eerste lamp, via de aan/uit-knop</li>
     </ul>
-    <p class="note">Wijzig je iets in Home Assistant, dan staat het binnen twintig seconden op het scherm.</p>
+    <p class="note">Speakers, weer, energie en de timer blijven op het scherm zelf.
+      Moods zijn nog vijf vaste bollen. Scenes worden wel opgehaald, maar nog niet getoond.
+      Draaien aan de rand verandert helderheid en streeftemperatuur alleen op het scherm.</p>
   </div>
 
   <footer>
