@@ -46,7 +46,7 @@
 <main>
   <div class="mark"><span></span></div>
   <h1>SmartEye</h1>
-  <p class="sub">Een rond bedieningsscherm voor Home Assistant,<br>op een Waveshare ESP32-S3-Touch-LCD-2.8C.</p>
+  <p class="sub">Een rond bedieningsscherm voor Home Assistant of Homey,<br>op een Waveshare ESP32-S3-Touch-LCD-2.8C.</p>
 
   <div class="install">
     <esp-web-install-button manifest="manifest.json">
@@ -68,7 +68,7 @@
       <li>Een Waveshare ESP32-S3-Touch-LCD-2.8C (het ronde scherm van 480x480)</li>
       <li>Een USB-C kabel die ook data doorgeeft, niet alleen stroom</li>
       <li>Chrome of Edge op een computer</li>
-      <li>Home Assistant in je netwerk, alleen als je zelf bouwt (zie hieronder)</li>
+      <li>Home Assistant of een Homey Pro in je netwerk</li>
     </ul>
   </div>
 
@@ -80,27 +80,33 @@
       <li>Wacht tot het klaar is en het scherm herstart.</li>
     </ol>
     <p class="note">Het bestand <code>smarteye-firmware.bin</code> op deze pagina is ouder dan de broncode.
-      Het bevat nog geen wifi-instelnetwerk en nog geen kamer-koppeling met Home Assistant.
-      Die zitten wel in de bron. Bouwen en flashen staat in de
+      Het bevat nog geen wifi-instelnetwerk, nog geen keuze tussen Home Assistant en Homey,
+      en nog geen kamer-koppeling. Die zitten wel in de bron. Bouwen en flashen staat in de
       <a href="https://github.com/RudyH1980/SmartEye#home-assistant">README</a>.</p>
   </div>
 
   <div class="card">
-    <h2 style="margin-top:0">Home Assistant, als je zelf bouwt</h2>
-    <p>Host en toegangssleutel gaan in <code>firmware/main/secrets.hpp</code> (kopie van
-      <code>secrets.hpp.example</code>), niet via dit scherm. De sleutel maak je in Home Assistant
-      onder je profiel, <strong>Beveiliging</strong>, langlevende toegangssleutels.</p>
-    <p>Daarna twee helpers onder <strong>Instellingen, Apparaten en diensten, Helpers</strong>:</p>
+    <h2 style="margin-top:0">Home Assistant of Homey</h2>
+    <p>Na een eigen build opent het scherm het netwerk <code>SmartEye-setup</code>.
+      Ga daar met je telefoon naartoe, of open <code>192.168.4.1</code>, en kies
+      Home Assistant of Homey. Vul het IP-adres en de sleutel in. Bij Homey kun je
+      een zone invullen; leeg betekent elke zone. Daarna draait alleen dat systeem.</p>
+    <p>De sleutel van Home Assistant maak je onder je profiel, <strong>Beveiliging</strong>,
+      langlevende toegangssleutels. De Homey-sleutel staat in de Homey Web App onder
+      <strong>Instellingen, API-sleutels</strong>. Typ geen poort: Home Assistant is 8123,
+      Homey is 80.</p>
+    <p>Wifi opnieuw instellen laat de keuze staan. Laat de sleutel dan leeg als het
+      systeem en het adres hetzelfde blijven.</p>
+    <p>Bij Home Assistant twee helpers onder <strong>Instellingen, Apparaten en diensten, Helpers</strong>:</p>
     <ul>
       <li><code>input_select.smarteye_ruimte</code>, een keuzelijst met je kamernamen</li>
       <li><code>input_number.smarteye_helderheid</code>, een schuif van 5 tot 100</li>
     </ul>
-    <p class="note">Het scherm leest die twee elke twintig seconden. Zonder helper voor de kamer toont het alle kamers.</p>
-    <p>Homey Pro kan de bron zijn in plaats van Home Assistant. Zet het IP-adres en een
-      API-sleutel (Homey, Instellingen, API-sleutels) in <code>secrets.hpp</code>, plus de zonenaam.
-      Lampen, de thermostaat en flows die je zelf start komen dan van Homey.
-      Staan beide sleutels erin, dan wint Homey voor de apparaten en blijft Home Assistant
-      de twee helpers doen.</p>
+    <p class="note">Die helpers gelden als Home Assistant gekozen is. Het scherm leest ze elke twintig seconden.
+      Zonder helper voor de kamer toont het alle kamers. Bij Homey komt de zone van het formulier.</p>
+    <p class="note"><code>secrets.hpp</code> is alleen de terugval als er op het apparaat nog geen keuze staat.
+      Staan daar beide sleutels in, dan komen de apparaten van Homey en blijven de twee helpers aan.
+      Een opgeslagen keuze negeert dat en start het andere systeem niet.</p>
   </div>
 
   <div class="card">

@@ -959,13 +959,34 @@ void buildLights() {
     // screens keep their placeholder values, so the interface is usable
     // whether or not Homey or Home Assistant answers.
     portal_apps::setMoodHandler(onMood);
-    gUseHa = (HA_TOKEN[0] != '\0') && (ha_client::begin(HA_HOST, HA_TOKEN) == ESP_OK);
-    gUseHomey = (HOMEY_TOKEN[0] != '\0') && (homey_client::begin(HOMEY_HOST, HOMEY_TOKEN) == ESP_OK);
-    if (gUseHomey) {
-        homey_client::setZone(HOMEY_ZONE);
+    // The key is 512 bytes and the main task stack is 3584, so this is static.
+    static HouseChoice stored;
+    stored = {};
+    bool chosen = false;
+    if (wifi_manager::loadHouse(&stored)) {
+        chosen = true;
+        if (stored.kind == HouseKind::HomeAssistant) {
+            gUseHa = ha_client::begin(stored.host, stored.token) == ESP_OK;
+        } else if (stored.kind == HouseKind::Homey) {
+            gUseHomey = homey_client::begin(stored.host, stored.token) == ESP_OK;
+            if (gUseHomey) {
+                homey_client::setZone(stored.zone);
+            }
+        }
+    } else {
+        // Nothing stored on the device yet: secrets.hpp is the fallback, and
+        // filling in both keys still lets Homey own the devices.
+        gUseHa = (HA_TOKEN[0] != '\0') && (ha_client::begin(HA_HOST, HA_TOKEN) == ESP_OK);
+        gUseHomey = (HOMEY_TOKEN[0] != '\0') && (homey_client::begin(HOMEY_HOST, HOMEY_TOKEN) == ESP_OK);
+        if (gUseHomey) {
+            homey_client::setZone(HOMEY_ZONE);
+        }
     }
+    std::memset(stored.token, 0, sizeof(stored.token));
     if (gUseHomey || gUseHa) {
         startHouse();
+    } else if (chosen) {
+        ESP_LOGW(TAG, "Stored house choice could not start, running on placeholder data");
     } else {
         ESP_LOGW(TAG, "No Home Assistant or Homey token set, running on placeholder data");
     }

@@ -16,21 +16,23 @@ Athom's branding, artwork or icons are used.
     and the value creeps, bring it upright and it stops
   - tapping, for on/off and presets
 - Wi-Fi setup on the device itself: it opens its own network (`SmartEye-setup`)
-  and shows a QR code, you pick your network on your phone. Credentials go to
-  NVS, so it never needs reflashing for a different network. If the QR code
-  does not open, join that network and open `192.168.4.1`. Settings can forget
-  the network (two taps) and start setup again.
+  and shows a QR code. The phone page at `192.168.4.1` asks which system this
+  screen follows, Home Assistant or Homey, then the address, the key and your
+  Wi-Fi network. For Homey you can also fill a zone name; leave it empty to
+  show every zone. That choice is stored on the device, and afterwards only
+  that system runs. Settings can forget the Wi-Fi network (two taps). The
+  system choice stays, so the key can be left blank when the system and the
+  address did not change. Switching either one needs a new key. If the QR
+  code does not open, join `SmartEye-setup` and open `192.168.4.1`.
 - Timer that keeps running in the background and sounds the onboard buzzer
   until you tap it away
 - SD card, mounted and formatted to FAT32 if needed
 
 ## Home Assistant
 
-Copy `firmware/main/secrets.hpp.example` to `firmware/main/secrets.hpp` and
-fill the host and a long-lived access token in. That file is gitignored. With
-no token the screens keep their placeholder values. An older `secrets.hpp`
-without the Homey lines still builds: Homey stays off until you copy the
-three new lines and `SMARTEYE_SECRETS_VERSION` from the example.
+On the setup page choose Home Assistant, then the IP address and a long-lived
+access token (your profile, Security, "Long-lived access tokens"). The port
+is always 8123; type the address only.
 
 Every 20 seconds the firmware reads two ordinary helpers, so you can change
 them from any dashboard:
@@ -51,10 +53,10 @@ From that area it then:
 
 ## Homey
 
-Homey Pro on the same LAN is a second source. The board talks to the local
-Web API (`http://<homey-ip>/api/...`) with an API key from the Homey Web App:
-Settings, API Keys. Put the IP in `HOMEY_HOST` and the key in `HOMEY_TOKEN`.
-`HOMEY_ZONE` is the zone name. Leave it empty to show every zone.
+On the setup page choose Homey. Homey Pro on the same LAN is the source. The
+board talks to the local Web API (`http://<homey-ip>/api/...`) with an API
+key from the Homey Web App: Settings, API Keys. The port is always 80. The
+zone name is optional; empty shows every zone.
 
 What it loads:
 
@@ -66,13 +68,25 @@ What it loads:
 Those flows replace the five placeholder moods. Tapping one starts it.
 Other flows are left alone, so a motion automation is not a button.
 
-When both tokens are filled in, devices and moods come from Homey. Home
-Assistant still supplies the two helpers, and the room helper overrides
-`HOMEY_ZONE`. That avoids listing every Homey lamp twice when Home Assistant
-already mirrors them. Homey alone does not read the helpers.
+A choice stored from the phone page is exclusive. Homey then does not read
+the Home Assistant helpers, and Home Assistant does not start beside it.
 
 The API key needs permission to read devices, zones and flows, and to set
 capabilities and start flows.
+
+## When nothing was chosen on the device
+
+`firmware/main/secrets.hpp` (copy the example; the file is gitignored) is
+only the fallback, for a build where the phone page has never stored a
+choice. With no token the screens keep their placeholder values. An older
+`secrets.hpp` without the Homey lines still builds: Homey stays off until
+you copy the three new lines and `SMARTEYE_SECRETS_VERSION` from the example.
+
+When both tokens in that file are filled in, devices and moods come from
+Homey. Home Assistant still supplies the two helpers, and the room helper
+overrides `HOMEY_ZONE`. That avoids listing every Homey lamp twice when Home
+Assistant already mirrors them. Homey alone does not read the helpers. A
+choice stored on the device ignores this and runs only the system you picked.
 
 ## Shared controls
 
@@ -91,8 +105,9 @@ https://rudyh1980.github.io/SmartEye/ flashes `docs/smarteye-firmware.bin`
 from Chrome or Edge on a computer, over USB.
 
 That image was built before the current source. It does not contain
-`SmartEye-setup`, `192.168.4.1`, the two helper entity ids, or the room-light
-template. Use the build below for the Home Assistant behaviour on this page.
+`SmartEye-setup`, `192.168.4.1`, the choice between Home Assistant and Homey,
+the Homey client, the two helper entity ids, or the room-light template.
+Use the build below for the behaviour on this page.
 
 ## Hardware
 

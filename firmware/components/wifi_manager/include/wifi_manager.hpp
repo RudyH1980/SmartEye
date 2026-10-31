@@ -13,6 +13,7 @@
 #include <functional>
 
 #include "esp_err.h"
+#include "house_setup.hpp"
 
 namespace wifi_manager {
 
@@ -48,7 +49,14 @@ esp_err_t start(StateCallback callback);
 /** @brief Whether credentials are stored */
 bool hasStoredCredentials();
 
-/** @brief Wipe stored credentials, so the next boot asks again */
+/**
+ * @brief Read the system chosen on the setup page
+ * @param out Filled when a choice is stored
+ * @return False when nothing valid is stored yet
+ */
+bool loadHouse(HouseChoice *out);
+
+/** @brief Wipe the stored Wi-Fi network. The house choice stays. */
 esp_err_t forgetCredentials();
 
 /** @brief Current state */

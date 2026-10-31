@@ -5,6 +5,7 @@
 
 #include "wifi_manager.hpp"
 
+#include <cstdlib>
 #include <cstring>
 
 #include "esp_event.h"
@@ -23,11 +24,20 @@ constexpr static const char *TAG = "WIFI";
 
 namespace wifi_manager {
 
+esp_err_t saveHouse(const HouseChoice &choice);
+
 namespace {
 
 constexpr const char *NVS_NAMESPACE = "smarteye";
 constexpr const char *NVS_KEY_SSID = "wifi_ssid";
 constexpr const char *NVS_KEY_PASS = "wifi_pass";
+constexpr const char *NVS_KEY_SYS = "house_sys";
+constexpr const char *NVS_KEY_HOST = "house_host";
+constexpr const char *NVS_KEY_TOKEN = "house_token";
+constexpr const char *NVS_KEY_ZONE = "house_zone";
+
+// The posted form carries a key, so it lives on the heap, not on this task.
+constexpr size_t BODY_MAX = 3072;
 
 // A network that is stored but momentarily out of reach must never send the
 // user back to first-run setup: it just keeps trying quietly in the
@@ -119,6 +129,97 @@ void urlDecode(const char *in, char *out, size_t outSize) {
     out[written] = '\0';
 }
 
+void htmlAttr(char *dest, size_t size, const char *src) {
+    size_t used = 0;
+    if (size == 0) {
+        return;
+    }
+    dest[0] = '\0';
+    if (src == nullptr) {
+        return;
+    }
+    for (size_t i = 0; src[i] != '\0'; i++) {
+        const char *rep = nullptr;
+        char one[2] = {src[i], '\0'};
+        switch (src[i]) {
+            case '&':
+                rep = "&amp;";
+                break;
+            case '"':
+                rep = "&quot;";
+                break;
+            case '<':
+                rep = "&lt;";
+                break;
+            case '>':
+                rep = "&gt;";
+                break;
+            case '\'':
+                rep = "&#39;";
+                break;
+            default:
+                rep = one;
+                break;
+        }
+        const size_t length = std::strlen(rep);
+        if (used + length >= size) {
+            break;
+        }
+        std::memcpy(dest + used, rep, length);
+        used += length;
+        dest[used] = '\0';
+    }
+}
+
+/** @brief System, address and zone. The key is never written back into the page. */
+void sendHouseFields(httpd_req_t *request) {
+    // The stored key is 512 bytes. Keep it off this task's stack.
+    auto *stored = static_cast<HouseChoice *>(std::calloc(1, sizeof(HouseChoice)));
+    const bool known = (stored != nullptr) && loadHouse(stored);
+    const bool homey = known && (stored->kind == HouseKind::Homey);
+
+    httpd_resp_sendstr_chunk(request, "<div class=field><label>Systeem</label><select name=system id=sys onchange=houseFields()>");
+    httpd_resp_sendstr_chunk(
+        request,
+        homey ? "<option value=ha>Home Assistant</option><option value=homey selected>Homey</option>"
+              : "<option value=ha selected>Home Assistant</option><option value=homey>Homey</option>"
+    );
+    httpd_resp_sendstr_chunk(request, "</select></div>");
+
+    char hostAttr[8 * (HOUSE_HOST_MAX + 1)] = {};
+    htmlAttr(hostAttr, sizeof(hostAttr), known ? stored->host : "");
+    httpd_resp_sendstr_chunk(request, "<div class=field><label>Adres</label><input name=host value=\"");
+    httpd_resp_sendstr_chunk(request, hostAttr);
+    httpd_resp_sendstr_chunk(
+        request,
+        "\" placeholder=\"192.168.1.20\" autocomplete=off autocapitalize=off autocorrect=off spellcheck=false></div>"
+    );
+
+    httpd_resp_sendstr_chunk(
+        request,
+        "<div class=field><label>Toegangssleutel</label><input name=token type=password autocomplete=off placeholder=\""
+    );
+    httpd_resp_sendstr_chunk(
+        request,
+        known ? "Leeg laten houdt de huidige sleutel" : "Homey API-sleutel of langlevende sleutel"
+    );
+    httpd_resp_sendstr_chunk(request, "\"></div>");
+
+    char zoneAttr[8 * (HOUSE_ZONE_MAX + 1)] = {};
+    htmlAttr(zoneAttr, sizeof(zoneAttr), homey ? stored->zone : "");
+    if (stored != nullptr) {
+        std::memset(stored->token, 0, sizeof(stored->token));
+        std::free(stored);
+    }
+    httpd_resp_sendstr_chunk(
+        request,
+        homey ? "<div class=field id=zone><label>Zone</label><input name=zone value=\""
+              : "<div class=field id=zone hidden><label>Zone</label><input name=zone value=\""
+    );
+    httpd_resp_sendstr_chunk(request, zoneAttr);
+    httpd_resp_sendstr_chunk(request, "\" placeholder=\"Leeg is elke zone\" autocomplete=off></div>");
+}
+
 esp_err_t rootHandler(httpd_req_t *request) {
     static const char *PAGE_HEAD =
         "<!doctype html><html lang=nl><meta charset=utf-8>"
@@ -147,9 +248,8 @@ esp_err_t rootHandler(httpd_req_t *request) {
         ".hint{margin:22px 0 0;font-size:13px;line-height:1.6;color:#75758a;text-align:center}"
         "</style><main><div class=mark><span></span></div>"
         "<h1>SmartEye instellen</h1>"
-        "<p class=sub>Kies het netwerk waarmee dit scherm verbinding moet maken.</p>"
-        "<form method=POST action=/save>"
-        "<div class=field><label>Netwerk</label><select name=ssid>";
+        "<p class=sub>Kies Home Assistant of Homey, en het wifi-netwerk van dit scherm.</p>"
+        "<form method=POST action=/save>";
 
     static const char *PAGE_TAIL =
         "</select></div>"
@@ -160,10 +260,16 @@ esp_err_t rootHandler(httpd_req_t *request) {
         "<input name=pass type=password autocomplete=off></div>"
         "<button type=submit>Verbinden</button></form>"
         "<p class=hint>Alleen 2,4 GHz-netwerken staan in de lijst.<br>"
-        "Dit apparaat kan geen 5 GHz.</p></main>";
+        "Dit apparaat kan geen 5 GHz.<br>"
+        "Home Assistant gebruikt poort 8123, Homey poort 80. Vul alleen het IP-adres in.</p>"
+        "<script>function houseFields(){var s=document.getElementById('sys');"
+        "var z=document.getElementById('zone');if(s&&z)z.hidden=s.value!=='homey';}"
+        "houseFields();</script></main>";
 
     httpd_resp_set_type(request, "text/html; charset=utf-8");
     httpd_resp_sendstr_chunk(request, PAGE_HEAD);
+    sendHouseFields(request);
+    httpd_resp_sendstr_chunk(request, "<div class=field><label>Netwerk</label><select name=ssid>");
 
     // Scan from AP mode so the list shows what is actually in range here.
     // The dwell time is set explicitly: too short and networks that answer
@@ -226,48 +332,185 @@ esp_err_t rootHandler(httpd_req_t *request) {
     return ESP_OK;
 }
 
-esp_err_t saveHandler(httpd_req_t *request) {
-    char body[256] = {};
-    const int toRead = (request->content_len < static_cast<int>(sizeof(body) - 1))
-                           ? static_cast<int>(request->content_len)
-                           : static_cast<int>(sizeof(body) - 1);
+struct Posted {
+    char systemRaw[32];
+    char hostRaw[1024];
+    char tokenRaw[1800];
+    char zoneRaw[128];
+    char manualRaw[SSID_MAX * 3];
+    char ssidRaw[SSID_MAX * 3];
+    char passRaw[PASS_MAX * 3];
+    char system[16];
+    char host[1024];
+    char token[HOUSE_TOKEN_MAX + 8];
+    char zone[HOUSE_ZONE_MAX + 8];
+    char ssid[SSID_MAX + 1];
+    char password[PASS_MAX + 1];
+};
 
-    const int received = httpd_req_recv(request, body, toRead);
-    if (received <= 0) {
+void takeField(const char *body, const char *key, char *raw, size_t rawSize, bool *truncated) {
+    raw[0] = '\0';
+    *truncated = false;
+    const esp_err_t ret = httpd_query_key_value(body, key, raw, rawSize);
+    if (ret == ESP_ERR_HTTPD_RESULT_TRUNC) {
+        *truncated = true;
+        raw[rawSize - 1] = '\0';
+    }
+}
+
+void wipeChoice(HouseChoice *choice) {
+    if (choice == nullptr) {
+        return;
+    }
+    std::memset(choice->token, 0, sizeof(choice->token));
+    std::free(choice);
+}
+
+esp_err_t rejectForm(
+    Posted *posted,
+    HouseChoice *previous,
+    HouseChoice *choice,
+    httpd_req_t *request,
+    httpd_err_code_t code,
+    const char *message
+) {
+    wipeChoice(previous);
+    wipeChoice(choice);
+    if (posted != nullptr) {
+        std::memset(posted->token, 0, sizeof(posted->token));
+        std::memset(posted->tokenRaw, 0, sizeof(posted->tokenRaw));
+        std::free(posted);
+    }
+    httpd_resp_send_err(request, code, message);
+    return ESP_FAIL;
+}
+
+esp_err_t saveHandler(httpd_req_t *request) {
+    if (request->content_len <= 0) {
         httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Leeg formulier");
         return ESP_FAIL;
     }
-    body[received] = '\0';
-
-    char rawSsid[SSID_MAX * 3] = {};
-    char rawPass[PASS_MAX * 3] = {};
-    char ssid[SSID_MAX + 1] = {};
-    char password[PASS_MAX + 1] = {};
-
-    // A typed-in name wins over the picked one, so a hidden network can be
-    // reached even though it never appears in the list.
-    char rawManual[SSID_MAX * 3] = {};
-    const bool hasManual =
-        (httpd_query_key_value(body, "manual", rawManual, sizeof(rawManual)) == ESP_OK) &&
-        (rawManual[0] != '\0');
-
-    if (hasManual) {
-        std::strncpy(rawSsid, rawManual, sizeof(rawSsid) - 1);
-    } else if (httpd_query_key_value(body, "ssid", rawSsid, sizeof(rawSsid)) != ESP_OK) {
-        httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Geen netwerk gekozen");
+    if (static_cast<size_t>(request->content_len) >= BODY_MAX) {
+        httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Formulier is te groot");
         return ESP_FAIL;
     }
-    httpd_query_key_value(body, "pass", rawPass, sizeof(rawPass));
 
-    urlDecode(rawSsid, ssid, sizeof(ssid));
-    urlDecode(rawPass, password, sizeof(password));
-
-    if (saveCredentials(ssid, password) != ESP_OK) {
+    char *body = static_cast<char *>(std::malloc(static_cast<size_t>(request->content_len) + 1));
+    auto *posted = static_cast<Posted *>(std::calloc(1, sizeof(Posted)));
+    if ((body == nullptr) || (posted == nullptr)) {
+        std::free(body);
+        std::free(posted);
         httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, "Opslaan mislukt");
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "Credentials stored for '%s', restarting to connect", ssid);
+    int received = 0;
+    int timeouts = 0;
+    const int total = request->content_len;
+    while (received < total) {
+        const int got = httpd_req_recv(request, body + received, static_cast<size_t>(total - received));
+        if (got == HTTPD_SOCK_ERR_TIMEOUT) {
+            if (++timeouts > 4) {
+                break;
+            }
+            continue;
+        }
+        if (got <= 0) {
+            break;
+        }
+        received += got;
+    }
+    if (received != total) {
+        std::free(body);
+        return rejectForm(posted, nullptr, nullptr, request, HTTPD_400_BAD_REQUEST, "Leeg formulier");
+    }
+    body[received] = '\0';
+
+    bool systemCut = false;
+    bool hostCut = false;
+    bool tokenCut = false;
+    bool zoneCut = false;
+    bool ignored = false;
+    takeField(body, "system", posted->systemRaw, sizeof(posted->systemRaw), &systemCut);
+    takeField(body, "host", posted->hostRaw, sizeof(posted->hostRaw), &hostCut);
+    takeField(body, "token", posted->tokenRaw, sizeof(posted->tokenRaw), &tokenCut);
+    takeField(body, "zone", posted->zoneRaw, sizeof(posted->zoneRaw), &zoneCut);
+    takeField(body, "manual", posted->manualRaw, sizeof(posted->manualRaw), &ignored);
+    takeField(body, "ssid", posted->ssidRaw, sizeof(posted->ssidRaw), &ignored);
+    takeField(body, "pass", posted->passRaw, sizeof(posted->passRaw), &ignored);
+    (void)ignored;
+    std::free(body);
+
+    if (systemCut) {
+        return rejectForm(posted, nullptr, nullptr, request, HTTPD_400_BAD_REQUEST, "Kies Home Assistant of Homey");
+    }
+    if (hostCut) {
+        return rejectForm(posted, nullptr, nullptr, request, HTTPD_400_BAD_REQUEST, "Adres is te lang");
+    }
+    if (tokenCut) {
+        return rejectForm(posted, nullptr, nullptr, request, HTTPD_400_BAD_REQUEST, "Toegangssleutel is te lang");
+    }
+    if (zoneCut) {
+        return rejectForm(posted, nullptr, nullptr, request, HTTPD_400_BAD_REQUEST, "Zonenaam is te lang");
+    }
+
+    urlDecode(posted->systemRaw, posted->system, sizeof(posted->system));
+    urlDecode(posted->hostRaw, posted->host, sizeof(posted->host));
+    urlDecode(posted->tokenRaw, posted->token, sizeof(posted->token));
+    urlDecode(posted->zoneRaw, posted->zone, sizeof(posted->zone));
+
+    auto *previous = static_cast<HouseChoice *>(std::calloc(1, sizeof(HouseChoice)));
+    auto *choice = static_cast<HouseChoice *>(std::calloc(1, sizeof(HouseChoice)));
+    if ((previous == nullptr) || (choice == nullptr)) {
+        return rejectForm(posted, previous, choice, request, HTTPD_500_INTERNAL_SERVER_ERROR, "Opslaan mislukt");
+    }
+    const bool hadHouse = loadHouse(previous);
+    char error[80] = {};
+    if (!acceptHouseChoice(
+            posted->system,
+            posted->host,
+            posted->token,
+            posted->zone,
+            hadHouse ? previous : nullptr,
+            choice,
+            error,
+            sizeof(error)
+        )) {
+        const char *message = (error[0] != '\0') ? error : "Kies Home Assistant of Homey";
+        return rejectForm(posted, previous, choice, request, HTTPD_400_BAD_REQUEST, message);
+    }
+
+    // A typed-in name wins over the picked one, so a hidden network can be
+    // reached even though it never appears in the list.
+    if (posted->manualRaw[0] != '\0') {
+        urlDecode(posted->manualRaw, posted->ssid, sizeof(posted->ssid));
+    } else {
+        urlDecode(posted->ssidRaw, posted->ssid, sizeof(posted->ssid));
+    }
+    urlDecode(posted->passRaw, posted->password, sizeof(posted->password));
+    if (posted->ssid[0] == '\0') {
+        return rejectForm(posted, previous, choice, request, HTTPD_400_BAD_REQUEST, "Geen netwerk gekozen");
+    }
+
+    if (saveHouse(*choice) != ESP_OK) {
+        return rejectForm(posted, previous, choice, request, HTTPD_500_INTERNAL_SERVER_ERROR, "Opslaan mislukt");
+    }
+    if (saveCredentials(posted->ssid, posted->password) != ESP_OK) {
+        return rejectForm(posted, previous, choice, request, HTTPD_500_INTERNAL_SERVER_ERROR, "Opslaan mislukt");
+    }
+
+    char network[SSID_MAX + 1] = {};
+    char host[HOUSE_HOST_MAX + 1] = {};
+    const char *system = (choice->kind == HouseKind::Homey) ? "homey" : "ha";
+    std::strncpy(network, posted->ssid, sizeof(network) - 1);
+    std::strncpy(host, choice->host, sizeof(host) - 1);
+    wipeChoice(previous);
+    wipeChoice(choice);
+    std::memset(posted->token, 0, sizeof(posted->token));
+    std::memset(posted->tokenRaw, 0, sizeof(posted->tokenRaw));
+    std::free(posted);
+
+    ESP_LOGI(TAG, "House %s at %s, credentials stored for '%s', restarting to connect", system, host, network);
 
     httpd_resp_set_type(request, "text/html; charset=utf-8");
     httpd_resp_sendstr(
@@ -414,6 +657,8 @@ void startWebServer() {
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.lru_purge_enable = true;
     config.max_uri_handlers = 16;
+    // The form check copies the key once. The default stack is too small for that.
+    config.stack_size = 8192;
 
     if (httpd_start(&gServer, &config) != ESP_OK) {
         ESP_LOGE(TAG, "Could not start setup web server");
@@ -599,6 +844,101 @@ bool hasStoredCredentials() {
     char ssid[SSID_MAX + 1] = {};
     char password[PASS_MAX + 1] = {};
     return loadCredentials(ssid, sizeof(ssid), password, sizeof(password)) == ESP_OK;
+}
+
+esp_err_t saveHouse(const HouseChoice &choice) {
+    const char *system = nullptr;
+    if (choice.kind == HouseKind::HomeAssistant) {
+        system = "ha";
+    } else if (choice.kind == HouseKind::Homey) {
+        system = "homey";
+    } else {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if ((choice.host[0] == '\0') || (choice.token[0] == '\0')) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t handle = 0;
+    esp_err_t ret = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    ret = nvs_set_str(handle, NVS_KEY_SYS, system);
+    if (ret == ESP_OK) {
+        ret = nvs_set_str(handle, NVS_KEY_HOST, choice.host);
+    }
+    if (ret == ESP_OK) {
+        ret = nvs_set_str(handle, NVS_KEY_TOKEN, choice.token);
+    }
+    if (ret == ESP_OK) {
+        ret = nvs_set_str(handle, NVS_KEY_ZONE, choice.zone);
+    }
+    if (ret == ESP_OK) {
+        ret = nvs_commit(handle);
+    }
+
+    nvs_close(handle);
+    return ret;
+}
+
+bool loadHouse(HouseChoice *out) {
+    if (out == nullptr) {
+        return false;
+    }
+    *out = {};
+
+    nvs_handle_t handle = 0;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
+        return false;
+    }
+
+    char system[8] = {};
+    size_t length = sizeof(system);
+    if (nvs_get_str(handle, NVS_KEY_SYS, system, &length) != ESP_OK) {
+        nvs_close(handle);
+        return false;
+    }
+    if (std::strcmp(system, "ha") == 0) {
+        out->kind = HouseKind::HomeAssistant;
+    } else if (std::strcmp(system, "homey") == 0) {
+        out->kind = HouseKind::Homey;
+    } else {
+        nvs_close(handle);
+        return false;
+    }
+
+    length = sizeof(out->host);
+    if (nvs_get_str(handle, NVS_KEY_HOST, out->host, &length) != ESP_OK) {
+        nvs_close(handle);
+        *out = {};
+        return false;
+    }
+
+    length = sizeof(out->token);
+    if (nvs_get_str(handle, NVS_KEY_TOKEN, out->token, &length) != ESP_OK) {
+        nvs_close(handle);
+        *out = {};
+        return false;
+    }
+
+    length = sizeof(out->zone);
+    const esp_err_t zoneResult = nvs_get_str(handle, NVS_KEY_ZONE, out->zone, &length);
+    if (zoneResult == ESP_ERR_NVS_NOT_FOUND) {
+        out->zone[0] = '\0';
+    } else if (zoneResult != ESP_OK) {
+        nvs_close(handle);
+        *out = {};
+        return false;
+    }
+
+    nvs_close(handle);
+    if ((out->host[0] == '\0') || (out->token[0] == '\0')) {
+        *out = {};
+        return false;
+    }
+    return true;
 }
 
 esp_err_t forgetCredentials() {

@@ -30,7 +30,7 @@ constexpr size_t MAX_RESPONSE = 192 * 1024;
 
 char gHost[64] = {};
 char gRoom[MAX_AREA] = {};
-char gToken[256] = {};
+char gToken[512] = {};
 bool gConnected = false;
 
 Device gDevices[MAX_DEVICES];
@@ -86,7 +86,7 @@ char *fetch(const char *path) {
         return nullptr;
     }
 
-    char auth[300];
+    char auth[560];
     std::snprintf(auth, sizeof(auth), "Bearer %s", gToken);
     esp_http_client_set_header(client, "Authorization", auth);
 
@@ -234,7 +234,7 @@ char *postForBody(const char *path, const char *payload, size_t limit) {
         return nullptr;
     }
 
-    char auth[300];
+    char auth[560];
     std::snprintf(auth, sizeof(auth), "Bearer %s", gToken);
     esp_http_client_set_header(client, "Authorization", auth);
     esp_http_client_set_header(client, "Content-Type", "application/json");
@@ -446,7 +446,7 @@ esp_err_t callService(const char *domain, const char *service, const char *body)
         return ESP_FAIL;
     }
 
-    char auth[300];
+    char auth[560];
     std::snprintf(auth, sizeof(auth), "Bearer %s", gToken);
     esp_http_client_set_header(client, "Authorization", auth);
     esp_http_client_set_header(client, "Content-Type", "application/json");
@@ -470,6 +470,10 @@ esp_err_t begin(const char *host, const char *token) {
     if (host == nullptr || token == nullptr || host[0] == '\0' || token[0] == '\0') {
         ESP_LOGE(TAG, "No host or token configured, see secrets.hpp");
         return ESP_ERR_INVALID_ARG;
+    }
+    if ((std::strlen(host) >= sizeof(gHost)) || (std::strlen(token) >= sizeof(gToken))) {
+        ESP_LOGE(TAG, "Home Assistant host or token does not fit");
+        return ESP_ERR_INVALID_SIZE;
     }
 
     copyField(gHost, sizeof(gHost), host);
