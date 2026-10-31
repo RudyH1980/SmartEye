@@ -96,18 +96,23 @@
       <li><code>input_number.smarteye_helderheid</code>, een schuif van 5 tot 100</li>
     </ul>
     <p class="note">Het scherm leest die twee elke twintig seconden. Zonder helper voor de kamer toont het alle kamers.</p>
+    <p>Homey Pro kan de bron zijn in plaats van Home Assistant. Zet het IP-adres en een
+      API-sleutel (Homey, Instellingen, API-sleutels) in <code>secrets.hpp</code>, plus de zonenaam.
+      Lampen, de thermostaat en flows die je zelf start komen dan van Homey.
+      Staan beide sleutels erin, dan wint Homey voor de apparaten en blijft Home Assistant
+      de twee helpers doen.</p>
   </div>
 
   <div class="card">
-    <h2 style="margin-top:0">Wat de bron vandaag uit Home Assistant haalt</h2>
+    <h2 style="margin-top:0">Wat de bron vandaag uit het huis haalt</h2>
     <ul>
-      <li>Alle lampen uit de gekozen kamer, inclusief lichtgroepen en het aantal lampen erin</li>
-      <li>De naam en de streeftemperatuur van de eerste thermostaat</li>
-      <li>Aan en uit van de eerste lamp, via de aan/uit-knop</li>
+      <li>Alle lampen uit de gekozen kamer of Homey-zone</li>
+      <li>De naam, de streefwaarde en de gemeten temperatuur van de eerste thermostaat</li>
+      <li>Aan, uit en helderheid van de eerste lamp</li>
+      <li>Bij Homey: flows die je zelf start, als moods</li>
     </ul>
     <p class="note">Speakers, weer, energie en de timer blijven op het scherm zelf.
-      Moods zijn nog vijf vaste bollen. Scenes worden wel opgehaald, maar nog niet getoond.
-      Draaien aan de rand verandert helderheid en streeftemperatuur alleen op het scherm.</p>
+      Een Homey-flow die vanzelf start, bijvoorbeeld op beweging, wordt geen knop.</p>
   </div>
 
   <footer>

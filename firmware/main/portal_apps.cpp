@@ -13,6 +13,7 @@
 #include "portal_apps.hpp"
 
 #include <cstdio>
+#include <cstring>
 
 #include "board_config.hpp"
 #include "board_drivers.hpp"
@@ -57,6 +58,15 @@ uint8_t gRefCount = 0;
 
 /** @brief Set by the owner so a page can send you home */
 void (*gGoHome)() = nullptr;
+
+/** @brief Set by the owner so a mood can start a flow or a scene */
+void (*gOnMood)(const char *entityId) = nullptr;
+
+constexpr int MOOD_SLOTS = 5;
+lv_obj_t *gMoodOrb[MOOD_SLOTS] = {};
+lv_obj_t *gMoodLabel[MOOD_SLOTS] = {};
+char gMoodEntity[MOOD_SLOTS][ha_client::MAX_ID] = {};
+bool gMoodsReady = false;
 
 // ---------------------------------------------------------------- helpers --
 
@@ -646,9 +656,17 @@ struct MoodSpec {
 };
 
 void moodCb(lv_event_t *event) {
-    const auto *spec = static_cast<const MoodSpec *>(lv_event_get_user_data(event));
-    if (spec != nullptr) {
-        ESP_LOGI(TAG, "Mood '%s' activated", spec->label);
+    const auto index = reinterpret_cast<intptr_t>(lv_event_get_user_data(event));
+    if ((index < 0) || (index >= MOOD_SLOTS)) {
+        return;
+    }
+    if (gMoodEntity[index][0] == '\0') {
+        ESP_LOGI(TAG, "Mood has no flow yet");
+        return;
+    }
+    ESP_LOGI(TAG, "Mood '%s' activated", gMoodEntity[index]);
+    if (gOnMood != nullptr) {
+        gOnMood(gMoodEntity[index]);
     }
 }
 
@@ -666,6 +684,7 @@ void buildMoods() {
     portal_ui::setTitle(page, "Living Room");
     portal_ui::setHero(page, "", nullptr);
 
+    int slot = 0;
     for (const MoodSpec &spec : MOODS) {
         lv_obj_t *orb = lv_obj_create(page.root);
         lv_obj_remove_style_all(orb);
@@ -686,14 +705,58 @@ void buildMoods() {
         lv_obj_t *label = makeLabel(page.root, &lv_font_montserrat_14, 0xFFFFFF, LV_OPA_80, spec.label);
         lv_obj_align_to(label, orb, LV_ALIGN_OUT_BOTTOM_MID, 0, 3);
 
-        lv_obj_add_event_cb(orb, moodCb, LV_EVENT_CLICKED, const_cast<MoodSpec *>(&spec));
+        gMoodOrb[slot] = orb;
+        gMoodLabel[slot] = label;
+        gMoodEntity[slot][0] = '\0';
+        lv_obj_add_event_cb(
+            orb,
+            moodCb,
+            LV_EVENT_CLICKED,
+            reinterpret_cast<void *>(static_cast<intptr_t>(slot))
+        );
+        slot++;
     }
+    gMoodsReady = true;
 }
 
 }  // namespace
 
 void setHomeHandler(void (*goHome)()) {
     gGoHome = goHome;
+}
+
+void setMoodHandler(void (*activate)(const char *entityId)) {
+    gOnMood = activate;
+}
+
+void setMoods(const ha_client::Device *devices, size_t count) {
+    if (!gMoodsReady || (devices == nullptr)) {
+        return;
+    }
+
+    size_t slot = 0;
+    for (size_t i = 0; (i < count) && (slot < MOOD_SLOTS); i++) {
+        if (devices[i].domain != ha_client::Domain::Scene) {
+            continue;
+        }
+        lv_label_set_text(gMoodLabel[slot], devices[i].name);
+        std::strncpy(gMoodEntity[slot], devices[i].entityId, sizeof(gMoodEntity[slot]) - 1);
+        gMoodEntity[slot][sizeof(gMoodEntity[slot]) - 1] = '\0';
+        lv_obj_remove_flag(gMoodOrb[slot], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(gMoodLabel[slot], LV_OBJ_FLAG_HIDDEN);
+        slot++;
+    }
+
+    // A refresh that found real scenes hides the leftover placeholders.
+    // A refresh with none at all leaves the built-in orbs alone.
+    if (slot == 0) {
+        return;
+    }
+    for (; slot < MOOD_SLOTS; slot++) {
+        gMoodEntity[slot][0] = '\0';
+        lv_obj_add_flag(gMoodOrb[slot], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(gMoodLabel[slot], LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 void setExpander(esp_io_expander_handle_t expander) {

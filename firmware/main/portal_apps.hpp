@@ -6,6 +6,7 @@
 #pragma once
 
 #include "esp_io_expander.h"
+#include "ha_client.hpp"
 #include "home_screen.hpp"
 #include "lvgl.h"
 
@@ -19,6 +20,19 @@ void setExpander(esp_io_expander_handle_t expander);
 
 /** @brief Build every app's screens; call once, with the LVGL lock held */
 void buildAll();
+
+/**
+ * @brief Called when a mood orb is tapped and it has a real flow or scene
+ * @param entityId Home Assistant scene id, or a homey-flow / homey-aflow id
+ */
+void setMoodHandler(void (*activate)(const char *entityId));
+
+/**
+ * @brief Replace the placeholder moods with scenes from the house
+ * @details Call with the LVGL lock held. No scenes leaves the placeholders.
+ *          The first five scenes are shown. The rest wait for a later refresh.
+ */
+void setMoods(const ha_client::Device *devices, size_t count);
 
 /**
  * @brief First screen of an app

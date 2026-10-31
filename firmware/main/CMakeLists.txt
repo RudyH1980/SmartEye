@@ -11,4 +11,6 @@ idf_component_register(
         imu_services
         rtc_services
         sd_services
+        ha_client
+        homey_client
 )

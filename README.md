@@ -26,18 +26,18 @@ Athom's branding, artwork or icons are used.
 
 ## Home Assistant
 
-Home Assistant is the link to the house. Homey stays behind Home Assistant,
-so the board only needs one connection. The host and a long-lived access
-token are compiled in: copy `firmware/main/secrets.hpp.example` to
-`firmware/main/secrets.hpp` and fill both in. That file is gitignored. With
-no token the screens keep their placeholder values.
+Copy `firmware/main/secrets.hpp.example` to `firmware/main/secrets.hpp` and
+fill the host and a long-lived access token in. That file is gitignored. With
+no token the screens keep their placeholder values. An older `secrets.hpp`
+without the Homey lines still builds: Homey stays off until you copy the
+three new lines and `SMARTEYE_SECRETS_VERSION` from the example.
 
 Every 20 seconds the firmware reads two ordinary helpers, so you can change
 them from any dashboard:
 
 | Helper | What it does |
 |---|---|
-| `input_select.smarteye_ruimte` | Area name, spelled exactly as in Home Assistant. Missing helper: show every area. |
+| `input_select.smarteye_ruimte` | Area or zone name, spelled exactly as in Home Assistant. Missing helper: show every area. |
 | `input_number.smarteye_helderheid` | Backlight, 5 to 100. |
 
 From that area it then:
@@ -45,22 +45,45 @@ From that area it then:
 - loads every `light`, including a light group made in Home Assistant (the
   puck shows how many lamps are in the group), onto the lights wheel and the
   colour-temperature page
-- takes the first `climate` entity for the thermostat title and the target
-  temperature
+- takes the first `climate` entity for the thermostat title, the target
+  temperature and, when Home Assistant reports it, the measured temperature
 - sends on/off for the first light when you tap the power button
 
-## Still on the device only
+## Homey
 
-Speakers, weather, energy and the timer do not read Home Assistant.
+Homey Pro on the same LAN is a second source. The board talks to the local
+Web API (`http://<homey-ip>/api/...`) with an API key from the Homey Web App:
+Settings, API Keys. Put the IP in `HOMEY_HOST` and the key in `HOMEY_TOKEN`.
+`HOMEY_ZONE` is the zone name. Leave it empty to show every zone.
 
-Moods are still five fixed orbs (Colorful, Custom Mood, Emerald, Monochrome,
-Sunset). Scenes are fetched, but that list is not drawn, and tapping a mood
-does not call the scene service.
+What it loads:
 
-Turning the rim or tilting the board changes the climate setpoint and the
-light brightness on the screen only. Those gestures do not call
-`setTemperature` or `setBrightness`. The temperature shown under the climate
-setpoint is fixed at 19.5°C.
+- lights (`class` light, or any device with dim, hue or colour temperature)
+- the thermostat in that zone (target and measured temperature)
+- flows you can start yourself: a standard flow whose trigger is "this flow
+  is started", and an advanced flow that has a start card and is enabled
+
+Those flows replace the five placeholder moods. Tapping one starts it.
+Other flows are left alone, so a motion automation is not a button.
+
+When both tokens are filled in, devices and moods come from Homey. Home
+Assistant still supplies the two helpers, and the room helper overrides
+`HOMEY_ZONE`. That avoids listing every Homey lamp twice when Home Assistant
+already mirrors them. Homey alone does not read the helpers.
+
+The API key needs permission to read devices, zones and flows, and to set
+capabilities and start flows.
+
+## Shared controls
+
+The power button sends on or off to whichever source owns the first light.
+When you stop turning the rim or tilting the board, the new brightness and
+the new thermostat target are sent as well. While you are still turning, the
+screen keeps the value local.
+
+Speakers, weather, energy and the timer do not read Homey or Home Assistant.
+The temperature under the setpoint stays 19.5°C until a thermostat reports a
+measured value.
 
 ## Browser install
 
@@ -88,7 +111,7 @@ port; set it in `platformio.ini`.
 
 ```bash
 cd firmware
-cp main/secrets.hpp.example main/secrets.hpp   # then fill in host and token
+cp main/secrets.hpp.example main/secrets.hpp   # Home Assistant and, if you use it, Homey
 pio run              # build
 pio run -t upload    # flash
 ```

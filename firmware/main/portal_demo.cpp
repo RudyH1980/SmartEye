@@ -17,6 +17,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "ha_client.hpp"
+#include "homey_client.hpp"
 #include "settings_screen.hpp"
 #include "home_screen.hpp"
 #include "lights_pages.hpp"
@@ -33,8 +34,23 @@
 #if __has_include("secrets.hpp")
 #include "secrets.hpp"
 #else
+#define SMARTEYE_SECRETS_VERSION 2
 constexpr const char *HA_HOST = "";
 constexpr const char *HA_TOKEN = "";
+constexpr const char *HOMEY_HOST = "";
+constexpr const char *HOMEY_TOKEN = "";
+constexpr const char *HOMEY_ZONE = "";
+#endif
+
+// secrets.hpp from before the Homey fields has no version macro. An undefined
+// macro counts as 0 here, so those builds keep compiling with Homey left off.
+#ifndef SMARTEYE_SECRETS_VERSION
+#define SMARTEYE_SECRETS_VERSION 1
+#endif
+#if SMARTEYE_SECRETS_VERSION < 2
+constexpr const char *HOMEY_HOST = "";
+constexpr const char *HOMEY_TOKEN = "";
+constexpr const char *HOMEY_ZONE = "";
 #endif
 
 constexpr static const char *TAG = "PORTAL_DEMO";
@@ -73,6 +89,7 @@ App gLights = {};
 lv_obj_t *gModeScreen = nullptr;
 
 int32_t gSetpointTenths = 215;
+int32_t gMeasuredTenths = MEASURED_TENTHS;
 int32_t gBrightness = 50;
 bool gLightsOn = true;
 bool gShowingBrightness = false;
@@ -91,6 +108,8 @@ bool gSetupShowing = false;
 // placeholder data
 char gClimateEntity[64] = {};
 char gLightEntity[64] = {};
+char gClimateName[40] = {};
+char gLightName[40] = {};
 
 // Kept for the backlight, which Home Assistant can set
 BoardDrivers::HardwareHandles gHw = {};
@@ -145,11 +164,78 @@ int32_t angleDelta(int32_t from, int32_t to) {
 
 
 // ---------------------------------------------------------------------------
-// Home Assistant
+// Home Assistant and Homey
 // ---------------------------------------------------------------------------
 
 void renderClimateIdle();
 void showLightsIdle();
+
+enum class HouseCmd { Power, Brightness, Temperature, Flow };
+
+struct HouseCmdMsg {
+    HouseCmd kind;
+    bool on;
+    int32_t number;
+    char entityId[64];
+};
+
+bool gUseHomey = false;
+bool gUseHa = false;
+
+void houseCommandTask(void *param) {
+    auto *msg = static_cast<HouseCmdMsg *>(param);
+    const bool homey = homey_client::owns(msg->entityId);
+    esp_err_t result = ESP_FAIL;
+
+    switch (msg->kind) {
+        case HouseCmd::Power:
+            result = homey ? homey_client::setPower(msg->entityId, msg->on)
+                           : ha_client::setPower(msg->entityId, msg->on);
+            break;
+        case HouseCmd::Brightness:
+            result = homey ? homey_client::setBrightness(msg->entityId, msg->number)
+                           : ha_client::setBrightness(msg->entityId, msg->number);
+            break;
+        case HouseCmd::Temperature:
+            result = homey ? homey_client::setTemperature(msg->entityId, msg->number)
+                           : ha_client::setTemperature(msg->entityId, msg->number);
+            break;
+        case HouseCmd::Flow:
+            result = homey ? homey_client::triggerFlow(msg->entityId)
+                           : ha_client::activateScene(msg->entityId);
+            break;
+    }
+
+    if (result != ESP_OK) {
+        ESP_LOGW(TAG, "Command failed for %s", msg->entityId);
+    }
+    heap_caps_free(msg);
+    vTaskDelete(nullptr);
+}
+
+void houseCommand(HouseCmd kind, const char *entityId, bool on, int32_t number) {
+    if ((entityId == nullptr) || (entityId[0] == '\0')) {
+        return;
+    }
+
+    auto *msg = static_cast<HouseCmdMsg *>(heap_caps_malloc(sizeof(HouseCmdMsg), MALLOC_CAP_INTERNAL));
+    if (msg == nullptr) {
+        return;
+    }
+    msg->kind = kind;
+    msg->on = on;
+    msg->number = number;
+    std::strncpy(msg->entityId, entityId, sizeof(msg->entityId) - 1);
+    msg->entityId[sizeof(msg->entityId) - 1] = '\0';
+
+    if (xTaskCreate(houseCommandTask, "house_cmd", 8192, msg, 3, nullptr) != pdPASS) {
+        heap_caps_free(msg);
+    }
+}
+
+void onMood(const char *entityId) {
+    houseCommand(HouseCmd::Flow, entityId, false, 0);
+}
 
 // The display is configured from Home Assistant itself: these are ordinary
 // helper entities, so they can be changed from any dashboard, on a phone or
@@ -162,90 +248,139 @@ constexpr uint32_t HA_POLL_MS = 20000;
 
 char gCurrentRoom[40] = {};
 
-/** @brief Take the devices Home Assistant reported and put them on screen */
+void keepFirst(char *dest, size_t size, const char *incoming) {
+    if (dest[0] == '\0') {
+        std::strncpy(dest, incoming, size - 1);
+        dest[size - 1] = '\0';
+    }
+}
+
+/** @brief Take the devices the house reported and put them on screen */
 void applyDevices(const ha_client::Device *devices, size_t count) {
     if (devices == nullptr) {
-        ESP_LOGW(TAG, "Home Assistant unreachable, keeping what is on screen");
+        ESP_LOGW(TAG, "House source unreachable, keeping what is on screen");
         return;
     }
 
-    // The lights screens all read from the same list, so the wheel, the
-    // temperature page and the zone view can never disagree about which
-    // lamps exist or how they are grouped.
-    lights_pages::setLamps(devices, count);
+    bool climateKnown = false;
+    bool lightKnown = false;
+    const ha_client::Device *climate = nullptr;
+    const ha_client::Device *light = nullptr;
 
     for (size_t i = 0; i < count; i++) {
         const ha_client::Device &device = devices[i];
+        if (device.domain == ha_client::Domain::Climate) {
+            keepFirst(gClimateEntity, sizeof(gClimateEntity), device.entityId);
+            if (std::strcmp(gClimateEntity, device.entityId) == 0) {
+                climate = &device;
+                climateKnown = true;
+            }
+        }
+        if (device.domain == ha_client::Domain::Light) {
+            keepFirst(gLightEntity, sizeof(gLightEntity), device.entityId);
+            if (std::strcmp(gLightEntity, device.entityId) == 0) {
+                light = &device;
+                lightKnown = true;
+            }
+        }
+    }
 
-        if ((device.domain == ha_client::Domain::Climate) && (gClimateEntity[0] == 0)) {
-            std::strncpy(gClimateEntity, device.entityId, sizeof(gClimateEntity) - 1);
-            if (device.temperature > 0) {
-                gSetpointTenths = device.temperature;
+    if (lvgl_wrapper::lock(200)) {
+        // One list for the wheel and the temperature page.
+        lights_pages::setLamps(devices, count);
+        portal_apps::setMoods(devices, count);
+
+        if (climateKnown && !gClimateAdjusting) {
+            if (climate->temperature >= 0) {
+                gSetpointTenths = climate->temperature;
             }
-            if (lvgl_wrapper::lock(100)) {
-                portal_ui::setTitle(gClimate.ui, device.name);
-                renderClimateIdle();
-                lvgl_wrapper::unlock();
+            if (climate->currentTemp != -1) {
+                gMeasuredTenths = climate->currentTemp;
             }
-            ESP_LOGI(TAG, "Thermostat: %s", device.name);
+            std::strncpy(gClimateName, climate->name, sizeof(gClimateName) - 1);
+            gClimateName[sizeof(gClimateName) - 1] = '\0';
+            renderClimateIdle();
         }
 
-        if ((device.domain == ha_client::Domain::Light) && (gLightEntity[0] == 0)) {
-            std::strncpy(gLightEntity, device.entityId, sizeof(gLightEntity) - 1);
-            gLightsOn = device.on;
-            if (device.brightness >= 0) {
-                gBrightness = device.brightness;
+        if (lightKnown && !gShowingBrightness) {
+            gLightsOn = light->on;
+            if (light->brightness >= 0) {
+                gBrightness = light->brightness;
             }
-            if (lvgl_wrapper::lock(100)) {
-                portal_ui::setTitle(gLights.ui, device.name);
-                showLightsIdle();
-                lvgl_wrapper::unlock();
-            }
-            ESP_LOGI(TAG, "Light: %s (%s)", device.name, device.area);
+            std::strncpy(gLightName, light->name, sizeof(gLightName) - 1);
+            gLightName[sizeof(gLightName) - 1] = '\0';
+            showLightsIdle();
+            portal_ui::setTitle(gLights.ui, gLightName);
         }
+        lvgl_wrapper::unlock();
+    }
+
+    if (climateKnown) {
+        ESP_LOGI(TAG, "Thermostat: %s", climate->name);
+    }
+    if (lightKnown) {
+        ESP_LOGI(TAG, "Light: %s (%s)", light->name, light->area);
     }
 }
 
 /**
- * @brief Follow the settings made in Home Assistant, then refresh
- * @details Runs on its own task: reading helpers and the device list means
- *          several requests, and none of that may hold up the screen.
+ * @brief Follow the room helper, then refresh whichever house source is on
+ * @details Homey wins for devices when both are configured, because Home
+ *          Assistant often mirrors the same lamps and showing both would
+ *          double them. The two helpers stay on Home Assistant.
  */
-void homeAssistantTask(void *param) {
+void houseTask(void *param) {
     (void)param;
 
     while (true) {
-        char room[40] = {};
-        const esp_err_t roomResult = ha_client::readHelper(HELPER_ROOM, room, sizeof(room));
+        if (gUseHa) {
+            char room[40] = {};
+            const esp_err_t roomResult = ha_client::readHelper(HELPER_ROOM, room, sizeof(room));
 
-        if (roomResult == ESP_ERR_NOT_FOUND) {
-            // No helper yet: show everything rather than nothing
-            if (gCurrentRoom[0] != 0) {
-                gCurrentRoom[0] = 0;
-                ha_client::setRoom("");
+            if (roomResult == ESP_ERR_NOT_FOUND) {
+                // No helper: Home Assistant shows every area. Homey keeps the
+                // zone from secrets.hpp instead of jumping to the whole house.
+                if (!gUseHomey && (gCurrentRoom[0] != '\0')) {
+                    gCurrentRoom[0] = '\0';
+                    ha_client::setRoom("");
+                }
+            } else if ((roomResult == ESP_OK) && (std::strcmp(room, gCurrentRoom) != 0)) {
+                std::strncpy(gCurrentRoom, room, sizeof(gCurrentRoom) - 1);
+                gCurrentRoom[sizeof(gCurrentRoom) - 1] = '\0';
+                ha_client::setRoom(room);
+                if (gUseHomey) {
+                    homey_client::setZone(room);
+                }
+                ESP_LOGI(TAG, "Room set from Home Assistant: %s", room);
             }
-        } else if ((roomResult == ESP_OK) && (std::strcmp(room, gCurrentRoom) != 0)) {
-            std::strncpy(gCurrentRoom, room, sizeof(gCurrentRoom) - 1);
-            ha_client::setRoom(room);
-            ESP_LOGI(TAG, "Room set from Home Assistant: %s", room);
+
+            char brightness[16] = {};
+            if (ha_client::readHelper(HELPER_BRIGHTNESS, brightness, sizeof(brightness)) == ESP_OK) {
+                const int percent = std::atoi(brightness);
+                if ((percent >= 5) && (percent <= 100)) {
+                    tests::setBacklight(gHw, percent);
+                }
+            }
         }
 
-        char brightness[16] = {};
-        if (ha_client::readHelper(HELPER_BRIGHTNESS, brightness, sizeof(brightness)) == ESP_OK) {
-            const int percent = std::atoi(brightness);
-            if ((percent >= 5) && (percent <= 100)) {
-                tests::setBacklight(gHw, percent);
-            }
+        if (gUseHomey) {
+            homey_client::refresh(applyDevices);
+        } else if (gUseHa) {
+            ha_client::refresh(applyDevices);
         }
-
-        ha_client::refresh(applyDevices);
         vTaskDelay(pdMS_TO_TICKS(HA_POLL_MS));
     }
 }
 
-void startHomeAssistant() {
-    xTaskCreate(homeAssistantTask, "ha_poll", 6144, nullptr, 3, nullptr);
-    ESP_LOGI(TAG, "Following Home Assistant for room and brightness");
+void startHouse() {
+    xTaskCreate(houseTask, "house_poll", 6144, nullptr, 3, nullptr);
+    if (gUseHomey && gUseHa) {
+        ESP_LOGI(TAG, "Following Homey for devices, Home Assistant for the helpers");
+    } else if (gUseHomey) {
+        ESP_LOGI(TAG, "Following Homey");
+    } else {
+        ESP_LOGI(TAG, "Following Home Assistant for room and brightness");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -266,12 +401,12 @@ void renderClimateIdle() {
         secondary,
         sizeof(secondary),
         "%ld.%ld\xC2\xB0",
-        static_cast<long>(MEASURED_TENTHS / 10),
-        static_cast<long>(MEASURED_TENTHS % 10)
+        static_cast<long>(gMeasuredTenths / 10),
+        static_cast<long>(gMeasuredTenths % 10)
     );
 
     portal_ui::showHeader(gClimate.ui, true);
-    portal_ui::setTitle(gClimate.ui, "Thermostat");
+    portal_ui::setTitle(gClimate.ui, (gClimateName[0] != '\0') ? gClimateName : "Thermostat");
     portal_ui::setHero(gClimate.ui, whole, decimal);
     portal_ui::setSecondary(gClimate.ui, secondary);
     portal_ui::setPalette(gClimate.ui, paletteForMode());
@@ -280,6 +415,7 @@ void renderClimateIdle() {
 void climateAdjustDoneCb(lv_timer_t *timer) {
     lv_timer_pause(timer);
     renderClimateIdle();
+    houseCommand(HouseCmd::Temperature, gClimateEntity, false, gSetpointTenths);
 }
 
 /** @brief The turning view: near-black, the number, and what it is */
@@ -355,6 +491,7 @@ void showLightsBrightness() {
 void adjustTimerCb(lv_timer_t *timer) {
     lv_timer_pause(timer);
     showLightsIdle();
+    houseCommand(HouseCmd::Brightness, gLightEntity, true, gBrightness);
 }
 
 void restartAdjustTimer() {
@@ -371,9 +508,7 @@ void powerButtonCb(lv_event_t *event) {
     showLightsIdle();
     ESP_LOGI(TAG, "Lights %s", gLightsOn ? "on" : "off");
 
-    if (gLightEntity[0] != 0) {
-        ha_client::setPower(gLightEntity, gLightsOn);
-    }
+    houseCommand(HouseCmd::Power, gLightEntity, gLightsOn, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -822,11 +957,17 @@ void buildLights() {
 
     // Once there is a network, pull the real devices in. Until that lands the
     // screens keep their placeholder values, so the interface is usable
-    // whether or not Home Assistant answers.
-    if ((HA_TOKEN[0] != 0) && (ha_client::begin(HA_HOST, HA_TOKEN) == ESP_OK)) {
-        startHomeAssistant();
+    // whether or not Homey or Home Assistant answers.
+    portal_apps::setMoodHandler(onMood);
+    gUseHa = (HA_TOKEN[0] != '\0') && (ha_client::begin(HA_HOST, HA_TOKEN) == ESP_OK);
+    gUseHomey = (HOMEY_TOKEN[0] != '\0') && (homey_client::begin(HOMEY_HOST, HOMEY_TOKEN) == ESP_OK);
+    if (gUseHomey) {
+        homey_client::setZone(HOMEY_ZONE);
+    }
+    if (gUseHomey || gUseHa) {
+        startHouse();
     } else {
-        ESP_LOGW(TAG, "No Home Assistant token set, running on placeholder data");
+        ESP_LOGW(TAG, "No Home Assistant or Homey token set, running on placeholder data");
     }
 
     if (hw.imu != nullptr) {
